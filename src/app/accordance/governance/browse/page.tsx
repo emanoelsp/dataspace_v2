@@ -102,11 +102,13 @@ interface Federation {
   description: string
 }
 
-function GovernanceBrowseContent() {
-  const searchParams = useSearchParams()
-  const initialFederationId = searchParams?.get("federationId") || ""
-  const initialFederationName = searchParams?.get("federationName") || ""
-
+function GovernanceBrowseContent({
+  initialFederationId = "",
+  initialFederationName = "",
+}: {
+  initialFederationId?: string
+  initialFederationName?: string
+}) {
   // Form states
   const [federationId, setFederationId] = useState(initialFederationId)
   const [federationName, setFederationName] = useState(initialFederationName)
@@ -149,11 +151,6 @@ function GovernanceBrowseContent() {
     }
     fetchFederations()
   }, [initialFederationId, initialFederationName])
-
-  useEffect(() => {
-    setFederationId(searchParams?.get("federationId") || "")
-    setFederationName(searchParams?.get("federationName") || "")
-  }, [searchParams])
 
   const handleFederationSelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
     const selectedId = e.target.value
@@ -564,10 +561,23 @@ function GovernanceBrowseContent() {
   )
 }
 
+// Novo componente para usar o hook e passar como props
+function GovernanceBrowseContentWithParams() {
+  const searchParams = useSearchParams()
+  const initialFederationId = searchParams?.get("federationId") || ""
+  const initialFederationName = searchParams?.get("federationName") || ""
+  return (
+    <GovernanceBrowseContent
+      initialFederationId={initialFederationId}
+      initialFederationName={initialFederationName}
+    />
+  )
+}
+
 export default function GovernanceBrowsePage() {
   return (
     <Suspense fallback={<div className="p-8 text-gray-600">Carregando...</div>}>
-      <GovernanceBrowseContent />
+      <GovernanceBrowseContentWithParams />
     </Suspense>
   )
 }
