@@ -5,6 +5,8 @@
 :root {
   --background: #ffffff;
   --foreground: #171717;
+    --header-height: 4rem; /* ajuste conforme seu header */
+  --nav-height: 3.5rem;
 }
 
 @media (prefers-color-scheme: dark) {
