@@ -1,6 +1,6 @@
 "use client"
 
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, Suspense } from "react"
 import Link from "next/link"
 import { useSearchParams } from "next/navigation"
 import { collection, addDoc, getDocs, serverTimestamp } from "firebase/firestore"
@@ -110,7 +110,7 @@ interface Federation {
   description: string
 }
 
-export default function CreateAssetPage() {
+function CreateAssetPageInner() {
   const searchParams = useSearchParams()
   const initialFederationId = searchParams?.get("federationId") || ""
   const initialFederationName = searchParams?.get("federationName") || ""
@@ -604,5 +604,14 @@ export default function CreateAssetPage() {
         </div>
       </div>
     </>
+  )
+}
+
+// Exporta o componente com Suspense para uso correto do useSearchParams
+export default function CreateAssetPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-gray-600">Carregando...</div>}>
+      <CreateAssetPageInner />
+    </Suspense>
   )
 }
