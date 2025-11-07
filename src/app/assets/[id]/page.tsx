@@ -166,6 +166,7 @@ export default function AssetDetailsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dynamicRows, setDynamicRows] = useState<DynamicRow[]>([])
+  const [dynamicColumns, setDynamicColumns] = useState<string[]>([]) // <-- ADICIONADO
   const [isQuerying, setIsQuerying] = useState(false)
   const [showCompliance, setShowCompliance] = useState(false)
   const [brokerUrl, setBrokerUrl] = useState("")
@@ -277,33 +278,53 @@ export default function AssetDetailsPage() {
     if (asset) fetchHeader()
   }, [asset])
 
-  // Fetch dynamic data from API or simulate
+  // Fetch dynamic data from API
   const fetchDynamicData = async () => {
     if (!asset?.apiEndpoint) return
     try {
       const res = await fetch(asset.apiEndpoint)
       if (!res.ok) throw new Error(`Error fetching data: ${res.status}`)
       const data = await res.json()
-      const d = Array.isArray(data) ? data[0] : data
-      setDynamicRows(prev => [
-        { timestamp: formatTimestamp(new Date()), ...d },
-        ...prev,
-      ].slice(0, 100))
+      // Lida com resposta sendo um array (como Ex 1) ou objeto (como Ex 2)
+      const dataRow = Array.isArray(data) ? data[0] : data
+      if (!dataRow) return;
+
+      // Cria a nova linha, adicionando nosso timestamp de "chegada"
+      const newRow: DynamicRow = { timestamp: formatTimestamp(new Date()), ...dataRow };
+
+      // Se as colunas ainda não foram definidas, defina-as agora
+      if (dynamicColumns.length === 0) {
+        const allKeys = Object.keys(newRow);
+        // Exclui chaves que já são mostradas na tabela "CPS Fixed Data" ou são complexas
+        const fixedKeys = ["id", "type", "location", "status", "speed", "protocol", "series"];
+        const filteredKeys = allKeys.filter(key => !fixedKeys.includes(key));
+        
+        // Garante que 'timestamp' (o nosso) seja a primeira coluna
+        const finalKeys = ["timestamp", ...filteredKeys.filter(k => k !== "timestamp")];
+        setDynamicColumns(finalKeys);
+      }
+
+      setDynamicRows(prev => [newRow, ...prev].slice(0, 100))
     } catch {
       // ignore errors
     }
   }
 
+  // Fetch simulated data
   const fetchSimulatedData = () => {
-    setDynamicRows(prev => [
-      {
-        timestamp: formatTimestamp(new Date()),
-        temperature: +(20 + Math.random() * 10).toFixed(2),
-        pressure: +(1 + Math.random()).toFixed(2),
-        flowRate: +(100 + Math.random() * 50).toFixed(2),
-      },
-      ...prev,
-    ].slice(0, 100))
+    const newRow = {
+      timestamp: formatTimestamp(new Date()),
+      temperature: +(20 + Math.random() * 10).toFixed(2),
+      pressure: +(1 + Math.random()).toFixed(2),
+      flowRate: +(100 + Math.random() * 50).toFixed(2),
+    };
+
+    // Define as colunas na primeira execução
+    if (dynamicColumns.length === 0) {
+      setDynamicColumns(Object.keys(newRow));
+    }
+
+    setDynamicRows(prev => [newRow, ...prev].slice(0, 100))
   }
 
   // Query interval
@@ -331,9 +352,6 @@ export default function AssetDetailsPage() {
   const pageSize = 20
   const pagedRows = dynamicRows.slice(page * pageSize, (page + 1) * pageSize)
   const totalPages = Math.ceil(dynamicRows.length / pageSize)
-
-  // Real-Time Readings: only temperature, pressure, flowRate
-  const realTimeColumns = ["timestamp", "temperature", "pressure", "flowRate"]
 
   // Asset actions
   const handleToggleActive = async () => {
@@ -509,6 +527,9 @@ export default function AssetDetailsPage() {
           setShowCompliance(false)
           setIsQuerying(true)
           setShowBrokerUrl(true)
+          setDynamicColumns([]) // <-- MODIFICADO
+          setDynamicRows([]) // <-- MODIFICADO
+          setPage(0) // <-- MODIFICADO
         }}
         brokerUrl={brokerUrl}
       />
@@ -638,21 +659,25 @@ export default function AssetDetailsPage() {
         {dynamicRows.length === 0 && (
           <p className="text-gray-500 italic">No dynamic readings yet. Click Start Query.</p>
         )}
-        {dynamicRows.length > 0 && (
+        {/* MODIFICAÇÃO AQUI */}
+        {dynamicRows.length > 0 && dynamicColumns.length > 0 && (
           <>
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm border">
                 <thead>
                   <tr>
-                    {realTimeColumns.map((key) => (
-                      <th key={key} className="py-2 px-3 border-b bg-gray-50 text-gray-700">{key}</th>
+                    {/* MODIFICAÇÃO AQUI */}
+                    {dynamicColumns.map((key) => (
+                      <th key={key} className="py-2 px-3 border-b bg-gray-50 text-gray-700 capitalize">{key.replace(/_/g, ' ')}</th>
+    
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {pagedRows.map((row, idx) => (
                     <tr key={idx} className="border-b last:border-b-0">
-                      {realTimeColumns.map((key) => (
+                      {/* MODIFICAÇÃO AQUI */}
+                      {dynamicColumns.map((key) => (
                         <td key={key} className="py-2 px-3">{row[key] !== undefined ? String(row[key]) : "-"}</td>
                       ))}
                     </tr>
