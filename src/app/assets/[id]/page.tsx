@@ -166,7 +166,7 @@ export default function AssetDetailsPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [dynamicRows, setDynamicRows] = useState<DynamicRow[]>([])
-  const [dynamicColumns, setDynamicColumns] = useState<string[]>([]) // <-- ADICIONADO
+  const [dynamicColumns, setDynamicColumns] = useState<string[]>([])
   const [isQuerying, setIsQuerying] = useState(false)
   const [showCompliance, setShowCompliance] = useState(false)
   const [brokerUrl, setBrokerUrl] = useState("")
@@ -245,14 +245,26 @@ export default function AssetDetailsPage() {
           const res = await fetch(asset.apiEndpoint)
           if (!res.ok) throw new Error()
           const data = await res.json()
-          const d = Array.isArray(data) ? data[0] : data
+
+          // Lógica para encontrar o cabeçalho
+          let headerData = null;
+          if (Array.isArray(data)) {
+            headerData = data[0];
+          } else if (typeof data === 'object' && data !== null) {
+            if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+              headerData = data.data[0]; // Usa o primeiro item dos dados aninhados se houver
+            } else {
+              headerData = data; // Usa o objeto raiz
+            }
+          }
+
           setCpsHeader({
-            id: d.id ?? asset.id,
-            type: d.type ?? asset.assetType,
-            location: d.location ?? asset.location,
-            status: d.status ?? asset.status,
-            speed: d.speed ?? asset.speed,
-            protocol: d.protocol ?? asset.protocol,
+            id: headerData?.id ?? headerData?.deviceId ?? asset.id,
+            type: headerData?.type ?? asset.assetType,
+            location: headerData?.location ?? asset.location,
+            status: headerData?.status ?? asset.status,
+            speed: headerData?.speed ?? asset.speed,
+            protocol: headerData?.protocol ?? asset.protocol,
           })
         } catch {
           setCpsHeader({
@@ -280,39 +292,74 @@ export default function AssetDetailsPage() {
 
   // Fetch dynamic data from API
   const fetchDynamicData = async () => {
-    if (!asset?.apiEndpoint) return
+    if (!asset?.apiEndpoint) return;
     try {
       const res = await fetch(asset.apiEndpoint)
       if (!res.ok) throw new Error(`Error fetching data: ${res.status}`)
-      const data = await res.json()
-      // Lida com resposta sendo um array (como Ex 1) ou objeto (como Ex 2)
-      const dataRow = Array.isArray(data) ? data[0] : data
-      if (!dataRow) return;
+      const data = await res.json() // 'data' é a resposta crua da API
+
+      // --- Lógica "inteligente" para encontrar o dado de tempo real ---
+      let dataRow: DynamicRow | null = null;
+
+      if (Array.isArray(data)) {
+        // Caso 1: A resposta é um array: [ { ... } ]
+        // (Ex: [{"deviceId":"cps3", "Carga_Cilindro":...}])
+        dataRow = data[0];
+      } else if (typeof data === 'object' && data !== null) {
+        if (data.data && Array.isArray(data.data) && data.data.length > 0) {
+          // Caso 3: A resposta é um objeto com um array 'data' dentro: { status: "...", data: [ { ... } ] }
+          // (Ex: seu novo exemplo de robô de solda)
+          dataRow = data.data[0]; // Pegamos o primeiro item do array 'data'
+        } else {
+          // Caso 2: A resposta é um objeto simples: { id: "...", temperature: ... }
+          // (Ex: {"id":"CPS001", "temperature":...})
+          dataRow = data;
+        }
+      }
+      // --- Fim da lógica ---
+
+      if (!dataRow) {
+        // Se nenhum dado válido foi encontrado, não faz nada
+        return;
+      }
 
       // Cria a nova linha, adicionando nosso timestamp de "chegada"
       const newRow: DynamicRow = { timestamp: formatTimestamp(new Date()), ...dataRow };
 
-      // Se as colunas ainda não foram definidas, defina-as agora
+      // Define as colunas dinamicamente no primeiro fetch
       if (dynamicColumns.length === 0) {
         const allKeys = Object.keys(newRow);
-        // Exclui chaves que já são mostradas na tabela "CPS Fixed Data" ou são complexas
-        const fixedKeys = ["id", "type", "location", "status", "speed", "protocol", "series"];
-        const filteredKeys = allKeys.filter(key => !fixedKeys.includes(key));
+        
+        // Chaves para excluir (metadados já mostrados em "CPS Fixed Data" ou dados complexos)
+        const keysToExclude = [
+          "id", "type", "location", "status", "speed", "protocol", // Da tabela Fixed
+          "series", // Arrays complexos
+          "ts", "deviceId", // Metadados que podem vir no payload
+          "status", "count" // Metadados do seu novo exemplo
+        ];
+        
+        // Filtra as chaves
+        const filteredKeys = allKeys.filter(key => !keysToExclude.includes(key));
         
         // Garante que 'timestamp' (o nosso) seja a primeira coluna
         const finalKeys = ["timestamp", ...filteredKeys.filter(k => k !== "timestamp")];
+        
         setDynamicColumns(finalKeys);
       }
 
       setDynamicRows(prev => [newRow, ...prev].slice(0, 100))
-    } catch {
-      // ignore errors
+    } catch (error) {
+      console.error("Failed to fetch dynamic data:", error);
+      // ignora erros na UI
     }
   }
 
   // Fetch simulated data
   const fetchSimulatedData = () => {
     const newRow = {
+      // Adicionando 'id' e 'ts' para simular um payload mais complexo
+      id: "sim-001",
+      ts: new Date().toISOString(),
       timestamp: formatTimestamp(new Date()),
       temperature: +(20 + Math.random() * 10).toFixed(2),
       pressure: +(1 + Math.random()).toFixed(2),
@@ -321,7 +368,14 @@ export default function AssetDetailsPage() {
 
     // Define as colunas na primeira execução
     if (dynamicColumns.length === 0) {
-      setDynamicColumns(Object.keys(newRow));
+        const allKeys = Object.keys(newRow);
+        const keysToExclude = [
+          "id", "type", "location", "status", "speed", "protocol",
+          "series", "ts", "deviceId", "status", "count"
+        ];
+        const filteredKeys = allKeys.filter(key => !keysToExclude.includes(key));
+        const finalKeys = ["timestamp", ...filteredKeys.filter(k => k !== "timestamp")];
+        setDynamicColumns(finalKeys);
     }
 
     setDynamicRows(prev => [newRow, ...prev].slice(0, 100))
@@ -527,9 +581,9 @@ export default function AssetDetailsPage() {
           setShowCompliance(false)
           setIsQuerying(true)
           setShowBrokerUrl(true)
-          setDynamicColumns([]) // <-- MODIFICADO
-          setDynamicRows([]) // <-- MODIFICADO
-          setPage(0) // <-- MODIFICADO
+          setDynamicColumns([]) // Reseta colunas
+          setDynamicRows([]) // Reseta linhas
+          setPage(0) // Reseta paginação
         }}
         brokerUrl={brokerUrl}
       />
@@ -659,14 +713,12 @@ export default function AssetDetailsPage() {
         {dynamicRows.length === 0 && (
           <p className="text-gray-500 italic">No dynamic readings yet. Click Start Query.</p>
         )}
-        {/* MODIFICAÇÃO AQUI */}
         {dynamicRows.length > 0 && dynamicColumns.length > 0 && (
           <>
             <div className="overflow-x-auto">
               <table className="min-w-full text-sm border">
                 <thead>
                   <tr>
-                    {/* MODIFICAÇÃO AQUI */}
                     {dynamicColumns.map((key) => (
                       <th key={key} className="py-2 px-3 border-b bg-gray-50 text-gray-700 capitalize">{key.replace(/_/g, ' ')}</th>
     
@@ -676,7 +728,6 @@ export default function AssetDetailsPage() {
                 <tbody>
                   {pagedRows.map((row, idx) => (
                     <tr key={idx} className="border-b last:border-b-0">
-                      {/* MODIFICAÇÃO AQUI */}
                       {dynamicColumns.map((key) => (
                         <td key={key} className="py-2 px-3">{row[key] !== undefined ? String(row[key]) : "-"}</td>
                       ))}
