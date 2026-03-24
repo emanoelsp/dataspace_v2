@@ -1,10 +1,11 @@
 "use client";
 
 import { useState } from 'react';
-import { getAuth, createUserWithEmailAndPassword } from 'firebase/auth';
-import { db, app } from '@/lib/firebase';
+import { createUserWithEmailAndPassword, updateProfile } from 'firebase/auth';
+import { auth, db, getFirebaseErrorMessage } from '@/lib/firebase';
 import { ToastSuccess, ToastFail } from './toast';
-import { doc, setDoc } from 'firebase/firestore';
+import { doc, serverTimestamp, setDoc } from 'firebase/firestore';
+import { emptyConsumerParticipantFields, sanitizeText } from '@/lib/dataspace';
 
 export default function SignUp({ isOpen, onClose }: { isOpen: boolean; onClose: () => void }) {
   const [email, setEmail] = useState('');
@@ -24,16 +25,21 @@ export default function SignUp({ isOpen, onClose }: { isOpen: boolean; onClose: 
     setShowFail(false);
 
     try {
-      const auth = getAuth(app);
-      await createUserWithEmailAndPassword(auth, email, password);
+      const normalizedName = sanitizeText(name);
+      const normalizedEmail = email.trim().toLowerCase();
+
+      await createUserWithEmailAndPassword(auth, normalizedEmail, password);
       const authUser = auth.currentUser;
       if (authUser) {
+        await updateProfile(authUser, { displayName: normalizedName });
         await setDoc(doc(db, 'users', authUser.uid), {
           uid: authUser.uid,
-          name,
-          email,
+          name: normalizedName,
+          email: normalizedEmail,
           userType,
-          createdAt: new Date().toISOString(),
+          ...emptyConsumerParticipantFields(),
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
         });
       }
       setShowSuccess(true);
@@ -42,11 +48,7 @@ export default function SignUp({ isOpen, onClose }: { isOpen: boolean; onClose: 
     } catch (err) {
       setShowFail(true);
       setTimeout(() => setShowFail(false), 3000);
-      if (err instanceof Error) {
-        setError(err.message);
-      } else {
-        setError('Ocorreu um erro desconhecido.');
-      }
+      setError(getFirebaseErrorMessage(err));
     } finally {
       setLoading(false);
     }
@@ -75,6 +77,7 @@ export default function SignUp({ isOpen, onClose }: { isOpen: boolean; onClose: 
                 onChange={(e) => setName(e.target.value)}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm p-2 border"
                 required
+                minLength={3}
               />
             </div>
             <div>
@@ -99,7 +102,7 @@ export default function SignUp({ isOpen, onClose }: { isOpen: boolean; onClose: 
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700">User type</label>
+              <label className="block text-sm font-medium text-gray-700">Participant role</label>
               <div className="mt-2 space-x-4">
                 <label className="inline-flex items-center">
                   <input
@@ -108,7 +111,7 @@ export default function SignUp({ isOpen, onClose }: { isOpen: boolean; onClose: 
                     onChange={() => setUserType('dataclient')}
                     className="h-4 w-4 text-blue-600"
                   />
-                  <span className="ml-2">Data Client</span>
+                  <span className="ml-2">Data Client (consumer)</span>
                 </label>
                 <label className="inline-flex items-center">
                   <input
@@ -117,9 +120,13 @@ export default function SignUp({ isOpen, onClose }: { isOpen: boolean; onClose: 
                     onChange={() => setUserType('datasource')}
                     className="h-4 w-4 text-blue-600"
                   />
-                  <span className="ml-2">Data Source</span>
+                  <span className="ml-2">Data Owner (provider)</span>
                 </label>
               </div>
+              <p className="mt-2 text-xs text-gray-500">
+                If you register as a Data Owner, complete your connector profile after sign-in under{' '}
+                <span className="font-medium text-gray-700">Participant → Connector profile</span> in the menu.
+              </p>
             </div>
           </div>
           <div className="mt-6">

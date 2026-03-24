@@ -227,16 +227,16 @@ export default function HomePage() {
           <div className="text-center mb-12">
             <div className="inline-flex items-center gap-2 bg-white/10 backdrop-blur-sm px-4 py-2 rounded-full mb-6">
               <Zap className="w-4 h-4" />
-              <span className="text-sm font-medium">Intra-Organizational Dataspace</span>
+              <span className="text-sm font-medium">Dataspace for Brownfield Manufacturing</span>
             </div>
             <h1 className="text-5xl md:text-6xl font-extrabold leading-tight mb-6">
-              Unlock the Power of Connected Manufacturing,
+              Break Manufacturing Data Silos,
               <br />
-              <span className="text-blue-200">Simplified</span>
+              <span className="text-blue-200">Without Centralizing Your CPS</span>
             </h1>
             <p className="text-xl text-blue-100 font-light max-w-3xl mx-auto leading-relaxed">
-              Seamlessly discover, govern, and access real-time data from your Cyber-Physical Systems (CPS) on the shop
-              floor.
+              Connect heterogeneous cyber-physical systems through federated governance, auditable contracts, and
+              direct peer-to-peer data access on the shop floor.
             </p>
           </div>
 
@@ -244,36 +244,36 @@ export default function HomePage() {
           <div className="grid md:grid-cols-3 gap-6 mb-12">
             <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
               <Shield className="w-8 h-8 mb-3 text-blue-200" />
-              <h3 className="font-semibold text-lg mb-2">Secure & Auditable</h3>
-              <p className="text-sm text-blue-100">Digital contracts with full traceability</p>
+              <h3 className="font-semibold text-lg mb-2">Solve Brownfield Fragmentation</h3>
+              <p className="text-sm text-blue-100">Integrate legacy and modern assets without forcing a central copy</p>
             </div>
             <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
               <TrendingUp className="w-8 h-8 mb-3 text-blue-200" />
-              <h3 className="font-semibold text-lg mb-2">Real-Time Access</h3>
-              <p className="text-sm text-blue-100">Direct federated data consumption</p>
+              <h3 className="font-semibold text-lg mb-2">Govern Federated Assets</h3>
+              <p className="text-sm text-blue-100">Manage federations, assets, compliance, and governance in one control plane</p>
             </div>
             <div className="bg-white/10 backdrop-blur-sm rounded-xl p-6 border border-white/20">
               <Globe className="w-8 h-8 mb-3 text-blue-200" />
-              <h3 className="font-semibold text-lg mb-2">Plug & Play</h3>
-              <p className="text-sm text-blue-100">Dynamic asset discovery and reconfiguration</p>
+              <h3 className="font-semibold text-lg mb-2">Preserve Data Sovereignty</h3>
+              <p className="text-sm text-blue-100">Authorize discovery and P2P consumption while data stays at the source</p>
             </div>
           </div>
 
           {/* Primary CTAs */}
           <div className="flex flex-wrap justify-center gap-4">
             <Link
-              href="/federations"
+              href="/federations/create"
               className="bg-white text-blue-700 px-8 py-4 rounded-lg font-semibold shadow-lg hover:shadow-xl hover:scale-105 transition-all flex items-center gap-2"
             >
               <UserPlus className="w-5 h-5" />
-              Register CPS Asset
+              Create Federation
             </Link>
             <Link
-              href="/assets"
+              href="/search"
               className="bg-blue-500 text-white px-8 py-4 rounded-lg font-semibold shadow-lg hover:bg-blue-400 hover:shadow-xl hover:scale-105 transition-all flex items-center gap-2"
             >
               <Search className="w-5 h-5" />
-              Discover Assets
+              Explore Catalog
             </Link>
           </div>
         </div>
@@ -287,25 +287,26 @@ export default function HomePage() {
               <Zap className="w-6 h-6 text-white" />
             </div>
             <div>
-              <h2 className="text-3xl font-bold text-gray-900 mb-2">The Resilient Production Cell</h2>
-              <p className="text-indigo-600 font-medium">Real-world scenario demonstration</p>
+              <h2 className="text-3xl font-bold text-gray-900 mb-2">The Problem Solved on the Shop Floor</h2>
+              <p className="text-indigo-600 font-medium">From isolated CPS endpoints to governed data exchange</p>
             </div>
           </div>
 
           <div className="bg-white p-6 rounded-xl shadow-sm border border-indigo-100">
             <p className="text-gray-700 leading-relaxed">
-              A <span className="font-semibold text-indigo-600">Control Architecture</span> (Client) needs a &apos;screwing&apos;
-              function. It queries the <span className="font-semibold text-indigo-600">Dataspace Broker</span> and finds
-              two available CPS robots. It reviews their{" "}
+              A <span className="font-semibold text-indigo-600">Control Architecture</span> needs a &apos;screwing&apos; capability,
+              but the available robots expose heterogeneous interfaces and policies. The{" "}
+              <span className="font-semibold text-indigo-600">Dataspace Broker</span> resolves this by exposing a
+              federated catalog of discoverable CPS assets. The client reviews their{" "}
               <code className="bg-indigo-50 px-2 py-1 rounded text-sm">ContractOffers</code>, digitally signs an
               agreement for real-time control, and starts the{" "}
               <span className="font-semibold text-indigo-600">&apos;Play&apos; </span> phase.
             </p>
             <div className="my-4 border-t border-indigo-100"></div>
             <p className="text-gray-700 leading-relaxed">
-              Later, one robot goes offline (<span className="font-semibold text-red-600">&apos;Unplug&apos; </span>). The Control
-              Architecture repeats the discovery process, finds a new available robot, signs a new contract, and
-              seamlessly reconfigures the cell—all governed by the dataspace.
+              Later, one robot goes offline (<span className="font-semibold text-red-600">&apos;Unplug&apos; </span>). The control
+              system repeats discovery, negotiates a new contract, and reconfigures the cell without copying plant data
+              into a central repository. This is the core benefit of the proposed dataspace architecture.
             </p>
           </div>
         </div>
@@ -518,16 +519,17 @@ export default function HomePage() {
       {/* Secondary CTA */}
       <section className="max-w-7xl mx-auto px-6 py-16">
         <div className="bg-gradient-to-r from-gray-900 to-gray-800 rounded-2xl p-12 text-center text-white shadow-xl">
-          <h2 className="text-3xl font-bold mb-4">Ready to Get Started?</h2>
+          <h2 className="text-3xl font-bold mb-4">Ready to operationalize the dataspace?</h2>
           <p className="text-gray-300 mb-8 max-w-2xl mx-auto">
-            Query the broker to explore available CPS assets and start building your resilient production architecture.
+            Register a federation, onboard CPS assets, publish governance rules, and start auditable discovery through
+            the federated catalog.
           </p>
           <Link
             href="/search"
             className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-500 text-white px-8 py-4 rounded-lg font-semibold shadow-lg hover:shadow-xl hover:scale-105 transition-all"
           >
             <Search className="w-5 h-5" />
-            Query the Broker
+            Start with the Catalog
           </Link>
         </div>
       </section>

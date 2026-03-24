@@ -47,6 +47,12 @@ const MENUS: Record<string, MenuType> = {
     icon: <ShieldCheck className="w-5 h-5 mr-2" />,
     sections: [
       {
+        label: "Participant",
+        description: "Legal entity and connector endpoints (after registration)",
+        basePath: "/profile",
+        options: [{ label: "Connector profile", href: "/profile/connector" }],
+      },
+      {
         label: "Federations",
         description: "Manage data federations",
         basePath: "/federations",

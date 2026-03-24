@@ -3,7 +3,7 @@
 import React, { useState } from "react";
 
 interface LoginProps {
-    onLogin: (email: string, password: string) => void;
+    onLogin: (email: string, password: string) => Promise<void>;
     error?: string;
 }
 
@@ -25,7 +25,7 @@ const SignIn: React.FC<LoginProps> = ({ onLogin, error }) => {
     return (
         <form onSubmit={handleSubmit}>
             <h2 className="text-2xl font-bold text-blue-900">Login </h2>
-            {error && <div style={{ color: "red" }}>{error}</div>}
+            {error && <div className="mt-2 rounded-md bg-red-50 px-3 py-2 text-sm text-red-700">{error}</div>}
             <div>
                 <label className="block text-sm font-medium text-gray-700">Email</label>
                 <input

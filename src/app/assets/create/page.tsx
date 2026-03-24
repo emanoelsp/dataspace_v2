@@ -6,6 +6,8 @@ import { useSearchParams } from "next/navigation"
 import { collection, addDoc, getDocs, serverTimestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { CheckCircle, Layers, Box, Code, FileText, ChevronLeft, X } from "lucide-react"
+import { buildOwnershipFields, sanitizeMultilineText, sanitizeOptionalText, sanitizeText, sanitizeUrl } from "@/lib/dataspace"
+import { useAuthUser } from "@/lib/use-auth-user"
 
 const steps = [
   { id: 1, title: "Choose Federation", icon: Layers },
@@ -111,6 +113,7 @@ interface Federation {
 }
 
 function CreateAssetPageInner() {
+  const { user, loading: authLoading } = useAuthUser()
   const searchParams = useSearchParams()
   const initialFederationId = searchParams?.get("federationId") || ""
   const initialFederationName = searchParams?.get("federationName") || ""
@@ -241,21 +244,36 @@ function CreateAssetPageInner() {
       setErrorMessage("Please fill in all required fields before submitting.")
       return
     }
+
+    if (!user) {
+      setErrorMessage("Sign in before registering an asset.")
+      return
+    }
+
+    const normalizedApiEndpoint = sanitizeUrl(apiEndpoint)
+
+    if (!normalizedApiEndpoint) {
+      setErrorMessage("Provide a valid API endpoint URL.")
+      return
+    }
+
     setIsSubmitting(true)
     setErrorMessage("")
     try {
       await addDoc(collection(db, "assets"), {
-        name,
+        name: sanitizeText(name),
         federationId,
-        federationName,
-        description,
-        assetType,
-        purpose,
-        semanticId,
-        apiEndpoint,
-        dataFormat,
-        accessType,
+        federationName: sanitizeText(federationName),
+        description: sanitizeMultilineText(description),
+        assetType: sanitizeText(assetType),
+        purpose: sanitizeText(purpose),
+        semanticId: sanitizeOptionalText(semanticId),
+        apiEndpoint: normalizedApiEndpoint,
+        dataFormat: sanitizeText(dataFormat),
+        accessType: sanitizeOptionalText(accessType),
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        ...buildOwnershipFields(user),
       })
       setSubmitSuccess(true)
       setShowToast(true)
@@ -592,6 +610,13 @@ function CreateAssetPageInner() {
 
       <div className="max-w-4xl mx-auto p-8 bg-white rounded-xl shadow-lg border border-gray-200 mt-4">
         <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Register a New Dataspace Asset</h1>
+
+        {!authLoading && !user && (
+          <div className="mb-6 rounded-md border-l-4 border-amber-500 bg-amber-50 p-4 text-sm text-amber-800">
+            Sign in using the header before submitting. New assets now carry ownership metadata used by access
+            requests and audit logs.
+          </div>
+        )}
 
         <StepIndicator currentStep={step} submitSuccess={submitSuccess} />
 

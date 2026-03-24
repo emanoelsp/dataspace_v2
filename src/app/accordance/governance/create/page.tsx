@@ -15,6 +15,8 @@ import {
   ChevronLeft,
 } from "lucide-react"
 import Link from "next/link"
+import { buildOwnershipFields, sanitizeMultilineText, sanitizeText } from "@/lib/dataspace"
+import { useAuthUser } from "@/lib/use-auth-user"
 
 const steps = [
   { id: 1, title: "Federation Selection", icon: Shield },
@@ -60,6 +62,7 @@ interface Asset {
 }
 
 export default function GovernanceCreatePage() {
+  const { user, loading: authLoading } = useAuthUser()
   // Step 1: Federation Selection
   const [federation, setFederation] = useState("")
   const [federations, setFederations] = useState<Federation[]>([])
@@ -159,18 +162,26 @@ export default function GovernanceCreatePage() {
       setErrorMessage("Please fill in all required fields before submitting.")
       return
     }
+
+    if (!user) {
+      setErrorMessage("Sign in before creating governance policies.")
+      return
+    }
+
     setIsSubmitting(true)
     setErrorMessage("")
     try {
       await addDoc(collection(db, "governance"), {
-        federation,
+        federation: sanitizeText(federation),
         assets: selectedAssets,
-        roles,
-        policies,
-        audit,
-        usagePeriods,
-        revocation,
+        roles: sanitizeMultilineText(roles),
+        policies: sanitizeMultilineText(policies),
+        audit: sanitizeMultilineText(audit),
+        usagePeriods: sanitizeMultilineText(usagePeriods),
+        revocation: sanitizeMultilineText(revocation),
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        ...buildOwnershipFields(user),
       })
       setSubmitSuccess(true)
     } catch {
@@ -558,6 +569,14 @@ export default function GovernanceCreatePage() {
 
       <div className="max-w-4xl mx-auto p-8 bg-white rounded-xl shadow-lg border border-gray-200 mt-4">
         <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Create Governance Policy</h1>
+
+        {!authLoading && !user && (
+          <div className="mb-6 rounded-md border-l-4 border-amber-500 bg-amber-50 p-4 text-sm text-amber-800">
+            Sign in using the header before submitting. Governance records now persist ownership metadata to support
+            traceable changes.
+          </div>
+        )}
+
         <StepIndicator currentStep={step} />
         <div className="space-y-5">
           {renderStep()}

@@ -1,28 +1,35 @@
 'use client';
 
-import { LogIn, UserPlus } from 'lucide-react';
+import { LogIn, LogOut, UserPlus } from 'lucide-react';
 import { useState } from 'react';
+import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import SignUp from './signup';
 import SignIn from './signin';
+import { auth, getFirebaseErrorMessage } from '@/lib/firebase';
+import { useUserProfile } from '@/lib/use-user-profile';
 
 export default function Header() {
-  // Removido isScrolled pois não está sendo usado
+  const { user, profile, loading } = useUserProfile()
   const [showSignupModal, setShowSignupModal] = useState(false); 
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginError, setLoginError] = useState<string | undefined>(undefined);
 
-  // Removido o efeito de scroll pois isScrolled não é utilizado
-
-  // Removido os parâmetros não utilizados e tipagem any
-  const handleLogin = async () => {
+  const handleLogin = async (email: string, password: string) => {
     try {
-      // Sua lógica de autenticação aqui
+      await signInWithEmailAndPassword(auth, email.trim().toLowerCase(), password)
       setLoginError(undefined);
       setShowLoginModal(false);
-    } catch {
-      setLoginError('Erro ao fazer login');
+    } catch (error) {
+      setLoginError(getFirebaseErrorMessage(error));
     }
   };
+
+  const handleLogout = async () => {
+    await signOut(auth)
+    setLoginError(undefined)
+    setShowLoginModal(false)
+    setShowSignupModal(false)
+  }
 
   return (
     <header className="bg-gradient-to-br from-blue-50 to-indigo-100">
@@ -31,20 +38,49 @@ export default function Header() {
         <div className="max-w-7xl mx-auto px-6">
           <div className="flex justify-end">
             <div className="flex gap-4">
-              <button
-                className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
-                onClick={() => setShowLoginModal(true)}
-              >  
-                <LogIn size={20} />
-                <span>Login</span>
-              </button>
-              <button
-                className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
-                onClick={() => setShowSignupModal(true)}
-              >
-                <UserPlus size={20} />
-                <span>Signup</span>
-              </button>
+              {loading ? (
+                <span className="text-sm text-blue-700">Checking session...</span>
+              ) : user ? (
+                <>
+                  <span className="flex flex-col sm:flex-row sm:items-center sm:gap-2 text-sm font-medium text-blue-800 text-right sm:text-left">
+                    <span>{user.displayName || user.email}</span>
+                    {profile && (
+                      <span className="text-xs font-normal text-blue-700/90">
+                        {profile.userType === 'datasource' ? 'Data Owner' : 'Data Client'}
+                        {profile.organizationLegalName
+                          ? ` · ${profile.organizationLegalName}`
+                          : profile.userType === 'datasource'
+                            ? ' · provider'
+                            : ''}
+                      </span>
+                    )}
+                  </span>
+                  <button
+                    className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
+                    onClick={handleLogout}
+                  >
+                    <LogOut size={20} />
+                    <span>Logout</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
+                    onClick={() => setShowLoginModal(true)}
+                  >  
+                    <LogIn size={20} />
+                    <span>Login</span>
+                  </button>
+                  <button
+                    className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
+                    onClick={() => setShowSignupModal(true)}
+                  >
+                    <UserPlus size={20} />
+                    <span>Signup</span>
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>

@@ -5,6 +5,8 @@ import { collection, addDoc, serverTimestamp } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import { CheckCircle, Building, Layers, Users, FileText, ChevronLeft, X } from "lucide-react"
 import Link from "next/link"
+import { buildOwnershipFields, sanitizeCsvText, sanitizeMultilineText, sanitizeText, sanitizeUrl } from "@/lib/dataspace"
+import { useAuthUser } from "@/lib/use-auth-user"
 
 const steps = [
   { id: 1, title: "Basic Info", icon: Building },
@@ -102,6 +104,7 @@ function StepIndicator({ currentStep, submitSuccess }: { currentStep: number, su
 }
 
 export default function CreateFederationPage() {
+  const { user, loading: authLoading } = useAuthUser()
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [organization, setOrganization] = useState("")
@@ -140,19 +143,34 @@ export default function CreateFederationPage() {
       setErrorMessage("Please fill in all required fields before submitting.")
       return
     }
+
+    if (!user) {
+      setErrorMessage("Sign in before registering a federation.")
+      return
+    }
+
+    const normalizedWebsite = website.trim() ? sanitizeUrl(website) : ""
+
+    if (website.trim() && !normalizedWebsite) {
+      setErrorMessage("Please provide a valid website URL.")
+      return
+    }
+
     setIsSubmitting(true)
     setErrorMessage("")
     try {
       await addDoc(collection(db, "federations"), {
-        name,
-        description,
-        organization,
-        federationType,
-        dataDomains,
-        mainDomain,
-        contactEmail,
-        website,
+        name: sanitizeText(name),
+        description: sanitizeMultilineText(description),
+        organization: sanitizeText(organization),
+        federationType: sanitizeText(federationType),
+        dataDomains: sanitizeCsvText(dataDomains),
+        mainDomain: sanitizeText(mainDomain),
+        contactEmail: contactEmail.trim().toLowerCase(),
+        website: normalizedWebsite,
         createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        ...buildOwnershipFields(user),
       })
       setSubmitSuccess(true)
       setShowToast(true)
@@ -423,6 +441,13 @@ export default function CreateFederationPage() {
 
       <div className="max-w-4xl mx-auto p-8 bg-white rounded-xl shadow-lg border border-gray-200 mt-4">
         <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Create a New Federation</h1>
+
+        {!authLoading && !user && (
+          <div className="mb-6 rounded-md border-l-4 border-amber-500 bg-amber-50 p-4 text-sm text-amber-800">
+            Sign in using the header before submitting. Federation registration now stores ownership metadata for
+            safer edit and audit flows.
+          </div>
+        )}
 
         <StepIndicator currentStep={step} submitSuccess={submitSuccess} />
 

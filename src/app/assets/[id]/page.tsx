@@ -2,9 +2,11 @@
 
 import { useEffect, useState, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { doc, getDoc, updateDoc, deleteDoc } from "firebase/firestore"
+import { addDoc, collection, deleteDoc, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import Link from "next/link"
+import { buildOwnershipFields, buildRequesterFields } from "@/lib/dataspace"
+import { useAuthUser } from "@/lib/use-auth-user"
 
 
 interface Asset {
@@ -13,6 +15,8 @@ interface Asset {
   description: string
   assetType: string
   purpose: string
+  federationId?: string
+  federationName?: string
   semanticId?: string
   apiEndpoint?: string
   dataFormat?: string
@@ -25,6 +29,8 @@ interface Asset {
   speed?: string
   protocol?: string
   active?: boolean
+  ownerId?: string
+  ownerEmail?: string
 }
 
 
@@ -160,6 +166,7 @@ function formatTimestamp(date: Date) {
 }
 
 export default function AssetDetailsPage() {
+  const { user, loading: authLoading } = useAuthUser()
   const params = useParams()
   const router = useRouter()
   const [asset, setAsset] = useState<Asset | null>(null)
@@ -209,6 +216,8 @@ export default function AssetDetailsPage() {
             description: data.description,
             assetType: data.assetType,
             purpose: data.purpose,
+            federationId: data.federationId,
+            federationName: data.federationName,
             semanticId: data.semanticId,
             apiEndpoint: data.apiEndpoint,
             dataFormat: data.dataFormat,
@@ -221,6 +230,8 @@ export default function AssetDetailsPage() {
             speed: data.speed || "-",
             protocol: data.protocol || "-",
             active: data.active !== false,
+            ownerId: data.ownerId,
+            ownerEmail: data.ownerEmail,
           }
           setAsset(assetData)
           setEditForm(assetData)
@@ -488,6 +499,51 @@ export default function AssetDetailsPage() {
     }
   }
 
+  const handleStartQuery = async () => {
+    if (!asset) {
+      return
+    }
+
+    if (!user) {
+      setShowCompliance(false)
+      setToastMsg("Sign in before starting a query.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
+    try {
+      await addDoc(collection(db, "accessLogs"), {
+        assetId: asset.id,
+        assetName: asset.name,
+        assetOwnerId: asset.ownerId ?? "",
+        assetOwnerEmail: asset.ownerEmail ?? "",
+        federationId: asset.federationId ?? "",
+        federationName: asset.federationName ?? "",
+        apiEndpoint: asset.apiEndpoint ?? "",
+        brokerUrl,
+        status: "started",
+        contractAccepted: true,
+        startedAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+        ...buildRequesterFields(user),
+        ...buildOwnershipFields(user),
+      })
+    } catch {
+      setToastMsg("Audit log could not be persisted, but the query will proceed.")
+      setToastError(true)
+      setShowToast(true)
+    }
+
+    setShowCompliance(false)
+    setIsQuerying(true)
+    setShowBrokerUrl(true)
+    setDynamicColumns([])
+    setDynamicRows([])
+    setPage(0)
+  }
+
   if (loading) return <p className="p-8 text-gray-600">Loading asset...</p>
   if (error) return <p className="p-8 text-red-600">{error}</p>
   if (!asset) return <p className="p-8 text-gray-600">Asset not found</p>
@@ -577,14 +633,7 @@ export default function AssetDetailsPage() {
       <ComplianceModal
         open={showCompliance}
         onClose={() => setShowCompliance(false)}
-        onConfirm={() => {
-          setShowCompliance(false)
-          setIsQuerying(true)
-          setShowBrokerUrl(true)
-          setDynamicColumns([]) // Reseta colunas
-          setDynamicRows([]) // Reseta linhas
-          setPage(0) // Reseta paginação
-        }}
+        onConfirm={handleStartQuery}
         brokerUrl={brokerUrl}
       />
 
@@ -679,10 +728,17 @@ export default function AssetDetailsPage() {
 
       {/* Control buttons */}
       {!isEditing && (
-        <div className="flex gap-4 mb-4 items-center">
+        <div className="mb-4">
+          {!authLoading && !user && (
+            <div className="mb-4 rounded-md border-l-4 border-amber-500 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+              Sign in before starting a query. Consumption attempts are now logged in Firestore for traceability.
+            </div>
+          )}
+
+          <div className="flex gap-4 items-center">
           <button
             onClick={() => setShowCompliance(true)}
-            disabled={isQuerying || asset.active === false}
+            disabled={isQuerying || asset.active === false || authLoading || !user}
             className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
             Start Query
@@ -704,6 +760,7 @@ export default function AssetDetailsPage() {
               <b>Broker API:</b> {brokerUrl}
             </span>
           )}
+          </div>
         </div>
       )}
 
