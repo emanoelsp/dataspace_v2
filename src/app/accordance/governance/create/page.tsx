@@ -73,12 +73,17 @@ export default function GovernanceCreatePage() {
   const [roles, setRoles] = useState("")
   // Step 4: Access Policies
   const [policies, setPolicies] = useState("")
+  const [purposeBinding, setPurposeBinding] = useState(true)
+  const [requiresManualApproval, setRequiresManualApproval] = useState(true)
   // Step 5: Audit & Traceability
   const [audit, setAudit] = useState("")
   // Step 6: Usage Periods
   const [usagePeriods, setUsagePeriods] = useState("")
+  const [agreementTtlHours, setAgreementTtlHours] = useState("24")
+  const [accessTokenTtlMinutes, setAccessTokenTtlMinutes] = useState("15")
   // Step 7: Revocation & Supervision
   const [revocation, setRevocation] = useState("")
+  const [revocationMode, setRevocationMode] = useState("owner-manual")
   // Step 8: Review & Submit
   const [step, setStep] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -126,8 +131,8 @@ export default function GovernanceCreatePage() {
   const isStep3Valid = () => roles.trim() !== ""
   const isStep4Valid = () => policies.trim() !== ""
   const isStep5Valid = () => audit.trim() !== ""
-  const isStep6Valid = () => usagePeriods.trim() !== ""
-  const isStep7Valid = () => revocation.trim() !== ""
+  const isStep6Valid = () => usagePeriods.trim() !== "" && Number(agreementTtlHours) > 0 && Number(accessTokenTtlMinutes) > 0
+  const isStep7Valid = () => revocation.trim() !== "" && revocationMode.trim() !== ""
 
   const handleNext = () => {
     if (step === 1 && isStep1Valid()) setStep(2)
@@ -176,9 +181,14 @@ export default function GovernanceCreatePage() {
         assets: selectedAssets,
         roles: sanitizeMultilineText(roles),
         policies: sanitizeMultilineText(policies),
+        purposeBinding,
+        requiresManualApproval,
         audit: sanitizeMultilineText(audit),
         usagePeriods: sanitizeMultilineText(usagePeriods),
+        agreementTtlHours: Number(agreementTtlHours),
+        accessTokenTtlMinutes: Number(accessTokenTtlMinutes),
         revocation: sanitizeMultilineText(revocation),
+        revocationMode: sanitizeText(revocationMode),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         ...buildOwnershipFields(user),
@@ -341,6 +351,26 @@ export default function GovernanceCreatePage() {
                 className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
               />
             </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <label className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={purposeBinding}
+                  onChange={(e) => setPurposeBinding(e.target.checked)}
+                  className="mt-1 h-4 w-4"
+                />
+                <span>Require declared purpose to be bound to agreement and token issuance.</span>
+              </label>
+              <label className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={requiresManualApproval}
+                  onChange={(e) => setRequiresManualApproval(e.target.checked)}
+                  className="mt-1 h-4 w-4"
+                />
+                <span>Require manual owner approval for asset access requests.</span>
+              </label>
+            </div>
             <div className="mt-6 flex justify-between">
               <button
                 type="button"
@@ -421,6 +451,28 @@ export default function GovernanceCreatePage() {
                 className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
               />
             </div>
+            <div className="grid gap-4 md:grid-cols-2">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Agreement lifetime (hours) *</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={agreementTtlHours}
+                  onChange={(e) => setAgreementTtlHours(e.target.value)}
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Access token lifetime (minutes) *</label>
+                <input
+                  type="number"
+                  min={1}
+                  value={accessTokenTtlMinutes}
+                  onChange={(e) => setAccessTokenTtlMinutes(e.target.value)}
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                />
+              </div>
+            </div>
             <div className="mt-6 flex justify-between">
               <button
                 type="button"
@@ -460,6 +512,18 @@ export default function GovernanceCreatePage() {
                 rows={4}
                 className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">Revocation mode *</label>
+              <select
+                value={revocationMode}
+                onChange={(e) => setRevocationMode(e.target.value)}
+                className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+              >
+                <option value="owner-manual">Owner manual revocation</option>
+                <option value="time-expiry">Automatic expiry</option>
+                <option value="hybrid">Hybrid</option>
+              </select>
             </div>
             <div className="mt-6 flex justify-between">
               <button
@@ -509,6 +573,12 @@ export default function GovernanceCreatePage() {
               <p>
                 <strong>Details:</strong> {policies || "N/A"}
               </p>
+              <p>
+                <strong>Purpose binding:</strong> {purposeBinding ? "Required" : "Optional"}
+              </p>
+              <p>
+                <strong>Manual approval:</strong> {requiresManualApproval ? "Required" : "Optional"}
+              </p>
               <h3 className="font-semibold text-lg mt-4 mb-2">Audit & Traceability</h3>
               <p>
                 <strong>Details:</strong> {audit || "N/A"}
@@ -517,9 +587,18 @@ export default function GovernanceCreatePage() {
               <p>
                 <strong>Details:</strong> {usagePeriods || "N/A"}
               </p>
+              <p>
+                <strong>Agreement lifetime:</strong> {agreementTtlHours} hour(s)
+              </p>
+              <p>
+                <strong>Access token lifetime:</strong> {accessTokenTtlMinutes} minute(s)
+              </p>
               <h3 className="font-semibold text-lg mt-4 mb-2">Revocation & Supervision</h3>
               <p>
                 <strong>Details:</strong> {revocation || "N/A"}
+              </p>
+              <p>
+                <strong>Revocation mode:</strong> {revocationMode}
               </p>
             </div>
             {submitSuccess && (

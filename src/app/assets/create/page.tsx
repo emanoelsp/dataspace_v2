@@ -7,6 +7,7 @@ import { collection, addDoc, getDocs, serverTimestamp } from "firebase/firestore
 import { db } from "@/lib/firebase"
 import { CheckCircle, Layers, Box, Code, FileText, ChevronLeft, X } from "lucide-react"
 import { buildOwnershipFields, sanitizeMultilineText, sanitizeOptionalText, sanitizeText, sanitizeUrl } from "@/lib/dataspace"
+import { ASSET_KINDS, EXCHANGE_MODES } from "@/lib/intra-dataspace"
 import { useAuthUser } from "@/lib/use-auth-user"
 
 const steps = [
@@ -127,11 +128,16 @@ function CreateAssetPageInner() {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [assetType, setAssetType] = useState("")
+  const [assetKind, setAssetKind] = useState("")
   const [purpose, setPurpose] = useState("")
   const [semanticId, setSemanticId] = useState("")
+  const [aasId, setAasId] = useState("")
+  const [irdi, setIrdi] = useState("")
+  const [semanticModel, setSemanticModel] = useState("AAS / IEC 63278")
 
   const [apiEndpoint, setApiEndpoint] = useState("")
   const [dataFormat, setDataFormat] = useState("")
+  const [exchangeMode, setExchangeMode] = useState("")
   const [accessType, setAccessType] = useState("")
 
   const [step, setStep] = useState(1)
@@ -182,9 +188,13 @@ function CreateAssetPageInner() {
   // Validações
   const isStep1Valid = () => federationId.trim() !== ""
   const isStep2Valid = () =>
-    name.trim() !== "" && description.trim() !== "" && assetType.trim() !== ""
+    name.trim() !== "" &&
+    description.trim() !== "" &&
+    assetType.trim() !== "" &&
+    assetKind.trim() !== "" &&
+    purpose.trim() !== ""
   const isStep3Valid = () =>
-    apiEndpoint.trim() !== "" && dataFormat.trim() !== ""
+    apiEndpoint.trim() !== "" && dataFormat.trim() !== "" && exchangeMode.trim() !== ""
 
   // Navegação
   const handleNext = () => {
@@ -266,11 +276,18 @@ function CreateAssetPageInner() {
         federationName: sanitizeText(federationName),
         description: sanitizeMultilineText(description),
         assetType: sanitizeText(assetType),
+        assetKind: sanitizeText(assetKind),
         purpose: sanitizeText(purpose),
         semanticId: sanitizeOptionalText(semanticId),
+        aasId: sanitizeOptionalText(aasId),
+        irdi: sanitizeOptionalText(irdi),
+        semanticModel: sanitizeOptionalText(semanticModel),
         apiEndpoint: normalizedApiEndpoint,
         dataFormat: sanitizeText(dataFormat),
+        exchangeMode: sanitizeText(exchangeMode),
         accessType: sanitizeOptionalText(accessType),
+        publishedInCatalog: false,
+        status: "draft",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         ...buildOwnershipFields(user),
@@ -384,6 +401,22 @@ function CreateAssetPageInner() {
                 </select>
               </div>
               <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Asset Kind *</label>
+                <select
+                  value={assetKind}
+                  onChange={(e) => setAssetKind(e.target.value)}
+                  required
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                >
+                  <option value="">-- Select Asset Kind --</option>
+                  {ASSET_KINDS.map((value) => (
+                    <option key={value} value={value}>
+                      {value === "data" ? "Data product" : value === "model" ? "ML model" : "Service"}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Purpose of Operation *</label>
                 <input
                   value={purpose}
@@ -402,6 +435,33 @@ function CreateAssetPageInner() {
                   className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
                 />
                 <p className="text-xs text-gray-500 mt-1">A unique identifier for the asset&apos;s meaning or type.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">AAS ID</label>
+                <input
+                  value={aasId}
+                  onChange={(e) => setAasId(e.target.value)}
+                  placeholder="e.g. urn:aas:shopfloor:cell-01:cps-07"
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">IRDI / ECLASS reference</label>
+                <input
+                  value={irdi}
+                  onChange={(e) => setIrdi(e.target.value)}
+                  placeholder="e.g. 0173-1#02-BAA120#007"
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Semantic model</label>
+                <input
+                  value={semanticModel}
+                  onChange={(e) => setSemanticModel(e.target.value)}
+                  placeholder="e.g. AAS / IEC 63278"
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                />
               </div>
             </div>
             <div className="mt-6 flex justify-between">
@@ -458,6 +518,22 @@ function CreateAssetPageInner() {
                   <option value="XML">XML</option>
                   <option value="Parquet">Parquet</option>
                   <option value="Other">Other</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Exchange Mode *</label>
+                <select
+                  value={exchangeMode}
+                  onChange={(e) => setExchangeMode(e.target.value)}
+                  required
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                >
+                  <option value="">-- Select Exchange Mode --</option>
+                  {EXCHANGE_MODES.map((value) => (
+                    <option key={value} value={value}>
+                      {value === "batch" ? "Batch" : value === "stream" ? "Stream" : "Hybrid"}
+                    </option>
+                  ))}
                 </select>
               </div>
               <div>
@@ -545,13 +621,18 @@ function CreateAssetPageInner() {
                 <p><strong>Asset Name:</strong> {name || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Description:</strong> <span className="whitespace-pre-line">{description || <span className="text-gray-400">N/A</span>}</span></p>
                 <p><strong>Type:</strong> {assetType || <span className="text-gray-400">N/A</span>}</p>
+                <p><strong>Asset Kind:</strong> {assetKind || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Purpose of Operation:</strong> {purpose || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Semantic ID:</strong> {semanticId || <span className="text-gray-400">N/A</span>}</p>
+                <p><strong>AAS ID:</strong> {aasId || <span className="text-gray-400">N/A</span>}</p>
+                <p><strong>IRDI / ECLASS:</strong> {irdi || <span className="text-gray-400">N/A</span>}</p>
+                <p><strong>Semantic Model:</strong> {semanticModel || <span className="text-gray-400">N/A</span>}</p>
               </section>
               <section className="mb-6">
                 <h2 className="font-semibold text-lg mb-1">3. Technical Info</h2>
                 <p><strong>API Endpoint:</strong> {apiEndpoint || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Data Format:</strong> {dataFormat || <span className="text-gray-400">N/A</span>}</p>
+                <p><strong>Exchange Mode:</strong> {exchangeMode || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Access Type:</strong> {accessType || <span className="text-gray-400">N/A</span>}</p>
               </section>
             </div>

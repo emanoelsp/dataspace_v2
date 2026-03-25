@@ -1,6 +1,6 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   Factory,
   ChevronDown,
@@ -9,9 +9,9 @@ import {
   Globe,
   Home,
   LayoutDashboard,
-  // BarChart3 removido pois não é utilizado
 } from "lucide-react"
 import Link from "next/link"
+import { useUserProfile } from "@/lib/use-user-profile"
 
 type MenuOption = { label: string; href: string }
 type MenuSubsection = {
@@ -47,9 +47,9 @@ const MENUS: Record<string, MenuType> = {
     icon: <ShieldCheck className="w-5 h-5 mr-2" />,
     sections: [
       {
-        label: "Participant",
-        description: "Legal entity and connector endpoints (after registration)",
-        basePath: "/profile",
+        label: "Connector",
+        description: "Legal entity and connector endpoints (profile is in the header)",
+        basePath: "/profile/connector",
         options: [{ label: "Connector profile", href: "/profile/connector" }],
       },
       {
@@ -89,24 +89,14 @@ const MENUS: Record<string, MenuType> = {
         ],
       },
       {
-        label: "Access Control",
-        description: "Federation broker, access requests and logs",
-        basePath: "/access",
-        options: [
-          { label: "Publish Federation to Broker", href: "/access/broker" },
-          { label: "Review Access Requests", href: "/access/requests" },
-          { label: "View Access Logs", href: "/access/logs" },
-        ],
-      },
-      {
         label: "Discovery",
         description: "Discover and explore data",
         basePath: "/search",
         options: [
-          { label: "Search Federation", href: "/search/federation" },
-          { label: "Search Assets", href: "/search/assets" },
-          { label: "Search by Type", href: "/search/type" },
-          { label: "Search Data", href: "/search/data" },
+          { label: "By federation (domains & type)", href: "/search/federation" },
+          { label: "By asset (metadata & format)", href: "/search/assets" },
+          { label: "By type & capability (function)", href: "/search/type" },
+          { label: "By data (signals & semantics)", href: "/search/data" },
         ],
       },
     ],
@@ -116,32 +106,29 @@ const MENUS: Record<string, MenuType> = {
     icon: <Globe className="w-5 h-5 mr-2" />,
     sections: [
       {
+        label: "Connector",
+        description: "Configure your consumer connector and track provider connections",
+        basePath: "/profile/connector",
+        options: [{ label: "Consumer connector", href: "/profile/connector" }],
+      },
+      {
         label: "Discovery",
         description: "Discover and explore data",
         basePath: "/search",
         options: [
-          { label: "Search Federation", href: "/search/federation" },
-          { label: "Search Assets", href: "/search/assets" },
-          { label: "Search by Type", href: "/search/type" },
-          { label: "Search Data", href: "/search/data" },
+          { label: "By federation (domains & type)", href: "/search/federation" },
+          { label: "By asset (metadata & format)", href: "/search/assets" },
+          { label: "By type & capability (function)", href: "/search/type" },
+          { label: "By data (signals & semantics)", href: "/search/data" },
         ],
       },
       {
         label: "Access Control",
-        description: "Access control and permissions",
+        description: "Track connector connections, federation memberships, and asset requests",
         basePath: "/access",
         options: [
-          { label: "Invitations", href: "/access/invitations" },
-          { label: "Traceability", href: "/access/rastrability" },
-        ],
-      },
-      {
-        label: "Analytics",
-        description: "View usage reports and metrics",
-        basePath: "/analytics",
-        options: [
-          { label: "Usage Reports", href: "/analytics/reports" },
-          { label: "Metrics Dashboard", href: "/analytics/metrics" },
+          { label: "Access workspace", href: "/access" },
+          { label: "My requests", href: "/access/my-requests" },
         ],
       },
     ],
@@ -150,9 +137,25 @@ const MENUS: Record<string, MenuType> = {
 
 export default function DataspaceMenu() {
   const [activeMenu, setActiveMenu] = useState<string | null>(null)
+  const { user, profile, loading } = useUserProfile()
+
+  const roleMenuKey =
+    profile?.userType === "datasource"
+      ? "data-owner"
+      : profile?.userType === "dataclient"
+        ? "data-client"
+        : null
+
+  useEffect(() => {
+    if (!user) {
+      setActiveMenu(null)
+    }
+  }, [user])
 
   // Fecha o menu ao clicar em qualquer link
   const handleLinkClick = () => setActiveMenu(null)
+
+  const showAuthenticatedNav = Boolean(user) && !loading
 
   return (
     <div className="bg-white shadow-lg p-4">
@@ -170,51 +173,55 @@ export default function DataspaceMenu() {
           </div>
 
           {/* Right side - Menu buttons */}
-          <div className="flex space-x-2">
-            {/* Home */}
+          <div className="flex flex-wrap items-center justify-end gap-1 sm:gap-2">
             <Link
               href="/"
-              className="flex items-center px-6 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-gray-700 hover:bg-blue-50 hover:text-blue-600"
+              className="flex items-center px-4 sm:px-6 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-gray-700 hover:bg-blue-50 hover:text-blue-600"
             >
               <Home className="w-5 h-5 mr-2" />
               Home
             </Link>
-            {/* Dashboard */}
-            <Link
-              href="/dashboard"
-              className="flex items-center px-6 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-gray-700 hover:bg-blue-50 hover:text-blue-600"
-            >
-              <LayoutDashboard className="w-5 h-5 mr-2" />
-              Dashboard
-            </Link>
-            {/* Data Owner / Data Client */}
-            {Object.entries(MENUS).map(([key, menu]) => (
-              <div key={key} className="relative">
-                <button
-                  onClick={() => setActiveMenu(activeMenu === key ? null : key)}
-                  className={`flex items-center px-6 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${activeMenu === key
-                      ? "bg-blue-600 text-white shadow-md"
-                      : "text-gray-700 hover:bg-blue-50 hover:text-blue-600"
-                    }`}
+            {showAuthenticatedNav && (
+              <>
+                <Link
+                  href="/dashboard"
+                  className="flex items-center px-4 sm:px-6 py-2 text-sm font-medium rounded-lg transition-all duration-200 text-gray-700 hover:bg-blue-50 hover:text-blue-600"
                 >
-                  {menu.icon}
-                  {menu.title}
-                  <ChevronDown
-                    className={`ml-2 h-4 w-4 transition-transform duration-200 ${activeMenu === key ? "rotate-180" : ""
+                  <LayoutDashboard className="w-5 h-5 mr-2" />
+                  Dashboard
+                </Link>
+                {roleMenuKey && (
+                  <div className="relative">
+                    <button
+                      type="button"
+                      onClick={() => setActiveMenu(activeMenu === roleMenuKey ? null : roleMenuKey)}
+                      className={`flex items-center px-4 sm:px-6 py-2 text-sm font-medium rounded-lg transition-all duration-200 ${
+                        activeMenu === roleMenuKey
+                          ? "bg-blue-600 text-white shadow-md"
+                          : "text-gray-700 hover:bg-blue-50 hover:text-blue-600"
                       }`}
-                  />
-                </button>
-              </div>
-            ))}
+                    >
+                      {MENUS[roleMenuKey].icon}
+                      {MENUS[roleMenuKey].title}
+                      <ChevronDown
+                        className={`ml-2 h-4 w-4 transition-transform duration-200 ${
+                          activeMenu === roleMenuKey ? "rotate-180" : ""
+                        }`}
+                      />
+                    </button>
+                  </div>
+                )}
+              </>
+            )}
           </div>
         </div>
 
-        {/* Mega Menu */}
-        {activeMenu && (
+        {/* Mega Menu (logged-in role menu only) */}
+        {activeMenu && roleMenuKey && activeMenu === roleMenuKey && (
           <div className="border-t border-gray-200 bg-white">
             <div className="py-8">
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-8">
-                {MENUS[activeMenu as keyof typeof MENUS].sections.map((section, idx) => (
+                {MENUS[roleMenuKey].sections.map((section, idx) => (
                   <div
                     key={idx}
                     className="bg-white rounded-lg p-6 shadow-sm border border-gray-100 hover:shadow-md transition-shadow"
@@ -281,7 +288,7 @@ export default function DataspaceMenu() {
               <div className="mt-8 pt-6 border-t border-gray-200">
                 <div className="flex flex-wrap gap-3">
                   <span className="text-sm font-medium text-gray-500">Quick Actions:</span>
-                  {activeMenu === "data-owner" && (
+                  {roleMenuKey === "data-owner" && (
                     <>
                       <Link
                         href="/federations/create"
@@ -295,13 +302,16 @@ export default function DataspaceMenu() {
                       </Link>
                     </>
                   )}
-                  {activeMenu === "data-client" && (
+                  {roleMenuKey === "data-client" && (
                     <>
                       <Link href="/search/federation" className="text-sm text-blue-600 hover:text-blue-700 font-medium" onClick={handleLinkClick}>
                         🔍 Search Federations
                       </Link>
                       <Link href="/search/data" className="text-sm text-blue-600 hover:text-blue-700 font-medium" onClick={handleLinkClick}>
                         🔍 Search Data
+                      </Link>
+                      <Link href="/access/my-requests" className="text-sm text-blue-600 hover:text-blue-700 font-medium" onClick={handleLinkClick}>
+                        🔍 My requests
                       </Link>
                     </>
                   )}

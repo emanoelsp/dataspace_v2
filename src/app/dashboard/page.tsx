@@ -1,6 +1,7 @@
 "use client"
 
 import { useEffect, useState } from "react"
+import Link from "next/link"
 import { collection, getDocs } from "firebase/firestore"
 import {
   Users,
@@ -15,6 +16,7 @@ import {
   TrendingUp,
 } from "lucide-react"
 import { db } from "@/lib/firebase"
+import { useUserProfile } from "@/lib/use-user-profile"
 
 type DashboardMetrics = {
   federations: number
@@ -30,6 +32,7 @@ type DashboardMetrics = {
 }
 
 export default function DashboardPage() {
+  const { user, loading: authLoading } = useUserProfile()
   const [metrics, setMetrics] = useState<DashboardMetrics>({
     federations: 0,
     assets: 0,
@@ -45,6 +48,10 @@ export default function DashboardPage() {
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
+    if (!user) {
+      return
+    }
+
     const fetchMetrics = async () => {
       try {
         setLoading(true)
@@ -111,7 +118,7 @@ export default function DashboardPage() {
     }
 
     fetchMetrics()
-  }, [])
+  }, [user])
 
   const stats = [
     {
@@ -160,6 +167,27 @@ export default function DashboardPage() {
       icon: <TrendingUp className="w-8 h-8 text-orange-600" />,
     },
   ]
+
+  if (authLoading) {
+    return (
+      <div className="min-h-[40vh] flex items-center justify-center text-gray-600 max-w-7xl mx-auto px-6">
+        Checking session…
+      </div>
+    )
+  }
+
+  if (!user) {
+    return (
+      <div className="max-w-lg mx-auto py-16 px-4 text-center">
+        <h1 className="text-2xl font-bold text-blue-800 mb-2">Dashboard</h1>
+        <p className="text-gray-700 mb-4">Sign in to view the dataspace overview and metrics.</p>
+        <p className="text-sm text-gray-500 mb-6">Use Login or Signup in the header.</p>
+        <Link href="/" className="text-blue-600 font-medium hover:underline">
+          Back to home
+        </Link>
+      </div>
+    )
+  }
 
   return (
     <div className="max-w-7xl mx-auto px-6 py-10">

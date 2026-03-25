@@ -10,6 +10,8 @@ interface Federation {
   id: string
   name: string
   description: string
+  catalogVisibility?: string
+  admissionMode?: string
 }
 
 interface Asset {
@@ -63,6 +65,8 @@ export default function FederationsBrowsePage() {
             id: doc.id,
             name: doc.data().name,
             description: doc.data().description,
+            catalogVisibility: doc.data().catalogVisibility,
+            admissionMode: doc.data().admissionMode,
           }))
         )
         setAssets(
@@ -146,6 +150,13 @@ export default function FederationsBrowsePage() {
                       <div>
                         <h2 className="text-xl font-semibold">{federation.name}</h2>
                         <p className="text-gray-700 text-sm">{federation.description}</p>
+                        {(federation.catalogVisibility || federation.admissionMode) ? (
+                          <p className="text-xs text-gray-500 mt-1">
+                            {federation.catalogVisibility ? `Visibility: ${federation.catalogVisibility}` : ""}
+                            {federation.catalogVisibility && federation.admissionMode ? " · " : ""}
+                            {federation.admissionMode ? `Admission: ${federation.admissionMode}` : ""}
+                          </p>
+                        ) : null}
                       </div>
                       <Link
                         href={`/federations/${federation.id}`}

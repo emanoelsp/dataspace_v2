@@ -1,6 +1,7 @@
 'use client';
 
-import { LogIn, LogOut, UserPlus } from 'lucide-react';
+import { LogIn, LogOut, User, UserPlus } from 'lucide-react';
+import Link from 'next/link';
 import { useState } from 'react';
 import { signInWithEmailAndPassword, signOut } from 'firebase/auth';
 import SignUp from './signup';
@@ -36,52 +37,62 @@ export default function Header() {
       {/* Parte fixa (login/cadastro) */}
       <div className="sticky top-0 z-50 bg-gradient-to-br from-blue-50 to-indigo-100 p-2">
         <div className="max-w-7xl mx-auto px-6">
-          <div className="flex justify-end">
-            <div className="flex gap-4">
-              {loading ? (
-                <span className="text-sm text-blue-700">Checking session...</span>
-              ) : user ? (
-                <>
-                  <span className="flex flex-col sm:flex-row sm:items-center sm:gap-2 text-sm font-medium text-blue-800 text-right sm:text-left">
-                    <span>{user.displayName || user.email}</span>
-                    {profile && (
-                      <span className="text-xs font-normal text-blue-700/90">
-                        {profile.userType === 'datasource' ? 'Data Owner' : 'Data Client'}
-                        {profile.organizationLegalName
-                          ? ` · ${profile.organizationLegalName}`
-                          : profile.userType === 'datasource'
-                            ? ' · provider'
-                            : ''}
-                      </span>
-                    )}
+          <div className="flex w-full items-center justify-between gap-4">
+            {loading ? (
+              <span className="text-sm text-blue-700">Checking session...</span>
+            ) : user ? (
+              <>
+                <div className="flex min-w-0 flex-col items-start gap-px text-left leading-none">
+                  <span className="text-sm font-medium text-blue-800 leading-none">
+                    {user.displayName || user.email}
                   </span>
+                  {profile && (
+                    <span className="inline-block max-w-full truncate rounded-md bg-blue-100/90 px-2 py-px text-xs font-medium text-blue-800 leading-tight">
+                      {profile.userType === 'datasource' ? 'Data Owner' : 'Data Client'}
+                      {profile.organizationLegalName
+                        ? ` · ${profile.organizationLegalName}`
+                        : profile.userType === 'datasource'
+                          ? ' · provider'
+                          : ''}
+                    </span>
+                  )}
+                </div>
+                <div className="flex shrink-0 items-center gap-4 sm:gap-6">
+                  <Link
+                    href="/profile"
+                    className="flex items-center gap-1.5 text-sm font-medium text-blue-700 hover:text-blue-900 transition-colors"
+                  >
+                    <User size={18} />
+                    Profile
+                  </Link>
                   <button
+                    type="button"
                     className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
                     onClick={handleLogout}
                   >
                     <LogOut size={20} />
                     <span>Logout</span>
                   </button>
-                </>
-              ) : (
-                <>
-                  <button
-                    className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
-                    onClick={() => setShowLoginModal(true)}
-                  >  
-                    <LogIn size={20} />
-                    <span>Login</span>
-                  </button>
-                  <button
-                    className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
-                    onClick={() => setShowSignupModal(true)}
-                  >
-                    <UserPlus size={20} />
-                    <span>Signup</span>
-                  </button>
-                </>
-              )}
-            </div>
+                </div>
+              </>
+            ) : (
+              <div className="ml-auto flex items-center gap-4 sm:gap-6">
+                <button
+                  className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
+                  onClick={() => setShowLoginModal(true)}
+                >
+                  <LogIn size={20} />
+                  <span>Login</span>
+                </button>
+                <button
+                  className="flex items-center gap-1 text-blue-700 hover:text-blue-900 transition-colors"
+                  onClick={() => setShowSignupModal(true)}
+                >
+                  <UserPlus size={20} />
+                  <span>Signup</span>
+                </button>
+              </div>
+            )}
           </div>
         </div>
       </div>

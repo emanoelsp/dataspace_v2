@@ -52,10 +52,11 @@ export function sanitizeOptionalUrl(value: string) {
 }
 
 /**
- * Metadata captured at registration for a Data Owner (provider), aligned with
- * common dataspace stacks (e.g. EDC participant + DSP + Management API + Federated Catalog).
+ * Connector metadata used by both provider and consumer roles in the INTRA
+ * control plane, aligned with common dataspace stacks (participant + DSP +
+ * Management API + Federated Catalog).
  */
-export function buildDataOwnerConnectorFields(input: {
+export function buildConnectorFields(input: {
   organizationLegalName: string
   participantId: string
   connectorDspBaseUrl: string
@@ -70,6 +71,8 @@ export function buildDataOwnerConnectorFields(input: {
     federatedCatalogUrl: sanitizeOptionalUrl(input.federatedCatalogUrl),
   }
 }
+
+export const buildDataOwnerConnectorFields = buildConnectorFields
 
 export function emptyConsumerParticipantFields() {
   return {

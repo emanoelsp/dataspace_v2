@@ -20,6 +20,8 @@ interface Federation {
   ownershipAccepted: boolean
   traceabilityAccepted: boolean
   createdAt: Date
+  /** When set on catalog / broker publication; defaults to visible if absent */
+  publishedInCatalog?: boolean
 }
 
 interface DiscoveryResult {
@@ -122,13 +124,19 @@ export default function DiscoveryPage() {
       ])
 
       // Get federation names for assets
-      const federationsData = federationsSnapshot.docs.map(doc => ({
-        id: doc.id,
-        ...doc.data(),
-        createdAt: doc.data().createdAt?.toDate()
-      })) as Federation[]
+      const federationsData = federationsSnapshot.docs
+        .map((doc) =>
+          ({
+            id: doc.id,
+            ...doc.data(),
+            createdAt: doc.data().createdAt?.toDate(),
+          }) as Federation,
+        )
+        .filter((f) => f.publishedInCatalog === true)
 
-      const assetsData = assetsSnapshot.docs.map(doc => {
+      const assetsData = assetsSnapshot.docs
+        .filter((doc) => doc.data().publishedInCatalog === true)
+        .map(doc => {
         const assetData = doc.data()
         const federation = federationsData.find(f => f.id === assetData.federationId)
         return {
@@ -190,6 +198,37 @@ export default function DiscoveryPage() {
           <button className="bg-blue-600 text-white px-5 py-2 rounded-md hover:bg-blue-700">
             Register Asset
           </button>
+        </Link>
+      </div>
+
+      <div className="mb-8 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+        <Link
+          href="/search/federation"
+          className="rounded-lg border border-blue-100 bg-blue-50/80 p-4 text-sm hover:border-blue-300 transition-colors"
+        >
+          <span className="font-semibold text-blue-900 block mb-1">By federation</span>
+          <span className="text-gray-600 text-xs">Domains, organization, federation type</span>
+        </Link>
+        <Link
+          href="/search/assets"
+          className="rounded-lg border border-indigo-100 bg-indigo-50/80 p-4 text-sm hover:border-indigo-300 transition-colors"
+        >
+          <span className="font-semibold text-indigo-900 block mb-1">By asset</span>
+          <span className="text-gray-600 text-xs">Metadata, format, semantic ID, access</span>
+        </Link>
+        <Link
+          href="/search/type"
+          className="rounded-lg border border-violet-100 bg-violet-50/80 p-4 text-sm hover:border-violet-300 transition-colors"
+        >
+          <span className="font-semibold text-violet-900 block mb-1">By type &amp; function</span>
+          <span className="text-gray-600 text-xs">Federation × asset class × use case</span>
+        </Link>
+        <Link
+          href="/search/data"
+          className="rounded-lg border border-teal-100 bg-teal-50/80 p-4 text-sm hover:border-teal-300 transition-colors"
+        >
+          <span className="font-semibold text-teal-900 block mb-1">By data signals</span>
+          <span className="text-gray-600 text-xs">Process variables &amp; formats</span>
         </Link>
       </div>
 

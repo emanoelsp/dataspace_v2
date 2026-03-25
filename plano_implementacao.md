@@ -42,6 +42,11 @@
 4. Introduzir índices do Firestore e paginação nas telas de busca, dashboard e auditoria.
 5. Migrar operações sensíveis para camada server-side e adicionar testes automatizados.
 
+## Trilha INTRA 1 a 5
+- O detalhamento técnico da evolução para o cenário INTRA foi consolidado em `backlog_intra_dataspace.md`.
+- O modelo de domínio usado como referência do código está em `src/lib/intra-dataspace.ts`.
+- A recomendação atual é executar a trilha INTRA antes de tentar integração EDC/Gaia-X completa, porque ela organiza membership, convites, contratos e credenciais no plano de controle já existente.
+
 ## Observações
 - O repositório já cobre bem o plano de controle do protótipo acadêmico.
 - O maior gap restante não é CRUD, mas governança executável e interoperabilidade semântica real.

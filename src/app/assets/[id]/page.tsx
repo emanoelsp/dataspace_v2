@@ -2,11 +2,12 @@
 
 import { useEffect, useState, useRef } from "react"
 import { useParams, useRouter } from "next/navigation"
-import { addDoc, collection, deleteDoc, doc, getDoc, serverTimestamp, updateDoc } from "firebase/firestore"
+import { addDoc, collection, deleteDoc, doc, getDoc, getDocs, query, serverTimestamp, setDoc, updateDoc, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
 import Link from "next/link"
 import { buildOwnershipFields, buildRequesterFields } from "@/lib/dataspace"
 import { useAuthUser } from "@/lib/use-auth-user"
+import { useUserProfile } from "@/lib/use-user-profile"
 
 
 interface Asset {
@@ -14,12 +15,17 @@ interface Asset {
   name: string
   description: string
   assetType: string
+  assetKind?: string
   purpose: string
   federationId?: string
   federationName?: string
   semanticId?: string
+  aasId?: string
+  irdi?: string
+  semanticModel?: string
   apiEndpoint?: string
   dataFormat?: string
+  exchangeMode?: string
   accessType?: string
   licenseType?: string
   createdAt?: unknown // ajuste de any para unknown
@@ -29,8 +35,73 @@ interface Asset {
   speed?: string
   protocol?: string
   active?: boolean
+  publishedInCatalog?: boolean
   ownerId?: string
   ownerEmail?: string
+  ownerName?: string
+}
+
+type FederationMembership = {
+  id: string
+  status: string
+}
+
+type ConnectorConnection = {
+  id: string
+  status: string
+  providerParticipantId?: string
+  consumerParticipantId?: string
+  createdAt?: { toDate?: () => Date }
+  updatedAt?: { toDate?: () => Date }
+}
+
+type ContractOffer = {
+  id: string
+  status: string
+  version?: number
+  createdAt?: { toDate?: () => Date }
+}
+
+type ContractAgreement = {
+  id: string
+  requesterId?: string
+  requesterName?: string
+  requesterEmail?: string
+  status: string
+  offerId?: string
+  validUntil?: { toDate?: () => Date } | Date
+  createdAt?: { toDate?: () => Date }
+}
+
+type CredentialGrant = {
+  id: string
+  requesterId?: string
+  requesterEmail?: string
+  status: string
+  credentialType?: string
+  issuedAt?: { toDate?: () => Date }
+  expiresAt?: { toDate?: () => Date } | Date
+}
+
+type AccessToken = {
+  id: string
+  token?: string
+  status: string
+  expiresAt?: { toDate?: () => Date } | Date
+}
+
+type GovernancePolicy = {
+  id: string
+  policies?: string
+  audit?: string
+  usagePeriods?: string
+  revocation?: string
+  purposeBinding?: boolean
+  requiresManualApproval?: boolean
+  agreementTtlHours?: number
+  accessTokenTtlMinutes?: number
+  revocationMode?: string
+  createdAt?: { toDate?: () => Date }
 }
 
 
@@ -165,8 +236,16 @@ function formatTimestamp(date: Date) {
   return `${hours}:${minutes}:${seconds} ${year}/${month}/${day}`
 }
 
+function isTimestampStillValid(value?: { toDate?: () => Date } | Date | null) {
+  if (!value) return false
+  const date = value instanceof Date ? value : value.toDate ? value.toDate() : null
+  if (!date) return false
+  return date.getTime() > Date.now()
+}
+
 export default function AssetDetailsPage() {
   const { user, loading: authLoading } = useAuthUser()
+  const { profile } = useUserProfile()
   const params = useParams()
   const router = useRouter()
   const [asset, setAsset] = useState<Asset | null>(null)
@@ -186,6 +265,17 @@ export default function AssetDetailsPage() {
   const [editForm, setEditForm] = useState<Asset | null>(null)
   const [isDeleting, setIsDeleting] = useState(false)
   const [showDeleteToast, setShowDeleteToast] = useState(false)
+  const [accessModelLoading, setAccessModelLoading] = useState(false)
+  const [currentConnection, setCurrentConnection] = useState<ConnectorConnection | null>(null)
+  const [hasActiveMembership, setHasActiveMembership] = useState(false)
+  const [contractOffers, setContractOffers] = useState<ContractOffer[]>([])
+  const [currentAgreement, setCurrentAgreement] = useState<ContractAgreement | null>(null)
+  const [assetAgreements, setAssetAgreements] = useState<ContractAgreement[]>([])
+  const [currentCredential, setCurrentCredential] = useState<CredentialGrant | null>(null)
+  const [assetCredentials, setAssetCredentials] = useState<CredentialGrant[]>([])
+  const [currentAccessToken, setCurrentAccessToken] = useState<AccessToken | null>(null)
+  const [governancePolicy, setGovernancePolicy] = useState<GovernancePolicy | null>(null)
+  const [accessVersion, setAccessVersion] = useState(0)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const [cpsHeader, setCpsHeader] = useState<Record<string, unknown>>({
     id: "-",
@@ -215,12 +305,17 @@ export default function AssetDetailsPage() {
             name: data.name,
             description: data.description,
             assetType: data.assetType,
+            assetKind: data.assetKind,
             purpose: data.purpose,
             federationId: data.federationId,
             federationName: data.federationName,
             semanticId: data.semanticId,
+            aasId: data.aasId,
+            irdi: data.irdi,
+            semanticModel: data.semanticModel,
             apiEndpoint: data.apiEndpoint,
             dataFormat: data.dataFormat,
+            exchangeMode: data.exchangeMode,
             accessType: data.accessType,
             licenseType: data.licenseType,
             createdAt: data.createdAt,
@@ -230,8 +325,10 @@ export default function AssetDetailsPage() {
             speed: data.speed || "-",
             protocol: data.protocol || "-",
             active: data.active !== false,
+            publishedInCatalog: data.publishedInCatalog === true,
             ownerId: data.ownerId,
             ownerEmail: data.ownerEmail,
+            ownerName: data.ownerName,
           }
           setAsset(assetData)
           setEditForm(assetData)
@@ -247,6 +344,237 @@ export default function AssetDetailsPage() {
     }
     fetchAsset()
   }, [params])
+
+  const canManageAsset = Boolean(
+    user &&
+    profile?.userType === "datasource" &&
+    asset?.ownerId &&
+    user.uid === asset.ownerId,
+  )
+  const isDataClient = profile?.userType === "dataclient"
+
+  useEffect(() => {
+    const loadAccessModel = async () => {
+      if (!asset?.id) {
+        setCurrentConnection(null)
+        setHasActiveMembership(false)
+        setContractOffers([])
+        setCurrentAgreement(null)
+        setAssetAgreements([])
+        setCurrentCredential(null)
+        setAssetCredentials([])
+        setCurrentAccessToken(null)
+        setGovernancePolicy(null)
+        return
+      }
+
+      try {
+        setAccessModelLoading(true)
+
+        const tasks: Promise<void>[] = []
+
+        tasks.push((async () => {
+          const governanceQuery = query(collection(db, "governance"), where("assets", "array-contains", asset.id))
+          const governanceSnapshot = await getDocs(governanceQuery)
+          const policy = governanceSnapshot.docs
+            .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as GovernancePolicy))
+            .sort((a, b) => {
+              const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0
+              const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0
+              return bTime - aTime
+            })[0] ?? null
+          setGovernancePolicy(policy)
+        })())
+
+        tasks.push((async () => {
+          if (!user || !isDataClient || !asset.ownerId) {
+            setCurrentConnection(null)
+            return
+          }
+
+          const connectionQuery = query(
+            collection(db, "connectorConnections"),
+            where("ownerId", "==", asset.ownerId),
+            where("requesterId", "==", user.uid),
+          )
+          const connectionSnapshot = await getDocs(connectionQuery)
+          const connection = connectionSnapshot.docs
+            .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as ConnectorConnection))
+            .sort((a, b) => {
+              const aTime = a.updatedAt?.toDate ? a.updatedAt.toDate().getTime() : a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0
+              const bTime = b.updatedAt?.toDate ? b.updatedAt.toDate().getTime() : b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0
+              return bTime - aTime
+            })[0] ?? null
+
+          setCurrentConnection(connection)
+        })())
+
+        tasks.push((async () => {
+          const offersQuery = query(collection(db, "contractOffers"), where("assetId", "==", asset.id))
+          const offersSnapshot = await getDocs(offersQuery)
+          const offers = offersSnapshot.docs
+            .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as ContractOffer))
+            .sort((a, b) => {
+              const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0
+              const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0
+              return bTime - aTime
+            })
+          setContractOffers(offers)
+        })())
+
+        tasks.push((async () => {
+          if (!user || !isDataClient || !asset.federationId) {
+            setHasActiveMembership(false)
+            return
+          }
+
+          const membershipQuery = query(
+            collection(db, "federationMemberships"),
+            where("federationId", "==", asset.federationId),
+            where("requesterId", "==", user.uid),
+          )
+          const membershipSnapshot = await getDocs(membershipQuery)
+          const membership = membershipSnapshot.docs
+            .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as FederationMembership))
+            .find((row) => row.status === "active")
+
+          setHasActiveMembership(Boolean(membership))
+        })())
+
+        tasks.push((async () => {
+          if (!user) {
+            setCurrentAgreement(null)
+            return
+          }
+
+          const currentAgreementQuery = query(
+            collection(db, "contractAgreements"),
+            where("assetId", "==", asset.id),
+            where("requesterId", "==", user.uid),
+          )
+          const currentAgreementSnapshot = await getDocs(currentAgreementQuery)
+          const agreement = currentAgreementSnapshot.docs
+            .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as ContractAgreement))
+            .sort((a, b) => {
+              const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0
+              const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0
+              return bTime - aTime
+            })[0] ?? null
+
+          setCurrentAgreement(agreement)
+        })())
+
+        tasks.push((async () => {
+          if (!canManageAsset) {
+            setAssetAgreements([])
+            return
+          }
+
+          const agreementsQuery = query(collection(db, "contractAgreements"), where("assetId", "==", asset.id))
+          const agreementsSnapshot = await getDocs(agreementsQuery)
+          const agreements = agreementsSnapshot.docs
+            .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as ContractAgreement))
+            .sort((a, b) => {
+              const aTime = a.createdAt?.toDate ? a.createdAt.toDate().getTime() : 0
+              const bTime = b.createdAt?.toDate ? b.createdAt.toDate().getTime() : 0
+              return bTime - aTime
+            })
+
+          setAssetAgreements(agreements)
+        })())
+
+        tasks.push((async () => {
+          if (!user) {
+            setCurrentCredential(null)
+            return
+          }
+
+          const credentialsQuery = query(
+            collection(db, "credentialGrants"),
+            where("assetId", "==", asset.id),
+            where("requesterId", "==", user.uid),
+          )
+          const credentialsSnapshot = await getDocs(credentialsQuery)
+          const credential = credentialsSnapshot.docs
+            .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as CredentialGrant))
+            .sort((a, b) => {
+              const aTime = a.issuedAt?.toDate ? a.issuedAt.toDate().getTime() : 0
+              const bTime = b.issuedAt?.toDate ? b.issuedAt.toDate().getTime() : 0
+              return bTime - aTime
+            })[0] ?? null
+
+          setCurrentCredential(credential)
+        })())
+
+        tasks.push((async () => {
+          if (!user) {
+            setCurrentAccessToken(null)
+            return
+          }
+
+          const tokenQuery = query(
+            collection(db, "accessTokens"),
+            where("assetId", "==", asset.id),
+            where("requesterId", "==", user.uid),
+          )
+          const tokenSnapshot = await getDocs(tokenQuery)
+          const token = tokenSnapshot.docs
+            .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as AccessToken))
+            .sort((a, b) => {
+              const aTime = a.expiresAt instanceof Date ? a.expiresAt.getTime() : a.expiresAt?.toDate ? a.expiresAt.toDate().getTime() : 0
+              const bTime = b.expiresAt instanceof Date ? b.expiresAt.getTime() : b.expiresAt?.toDate ? b.expiresAt.toDate().getTime() : 0
+              return bTime - aTime
+            })[0] ?? null
+
+          setCurrentAccessToken(token)
+        })())
+
+        tasks.push((async () => {
+          if (!canManageAsset) {
+            setAssetCredentials([])
+            return
+          }
+
+          const credentialsQuery = query(collection(db, "credentialGrants"), where("assetId", "==", asset.id))
+          const credentialsSnapshot = await getDocs(credentialsQuery)
+          const credentials = credentialsSnapshot.docs
+            .map((docSnapshot) => ({ id: docSnapshot.id, ...docSnapshot.data() } as CredentialGrant))
+            .sort((a, b) => {
+              const aTime = a.issuedAt?.toDate ? a.issuedAt.toDate().getTime() : 0
+              const bTime = b.issuedAt?.toDate ? b.issuedAt.toDate().getTime() : 0
+              return bTime - aTime
+            })
+
+          setAssetCredentials(credentials)
+        })())
+
+        await Promise.all(tasks)
+      } catch (err) {
+        console.error("Failed to load contract and credential state:", err)
+      } finally {
+        setAccessModelLoading(false)
+      }
+    }
+
+    loadAccessModel()
+  }, [asset?.id, asset?.federationId, asset?.ownerId, user, isDataClient, canManageAsset, accessVersion])
+
+  const publishedOffer = contractOffers.find((offer) => offer.status === "published") ?? null
+  const agreementTtlHours = governancePolicy?.agreementTtlHours && governancePolicy.agreementTtlHours > 0 ? governancePolicy.agreementTtlHours : 24
+  const accessTokenTtlMinutes =
+    governancePolicy?.accessTokenTtlMinutes && governancePolicy.accessTokenTtlMinutes > 0 ? governancePolicy.accessTokenTtlMinutes : 15
+  const hasActiveConnection = currentConnection?.status === "active"
+  const hasFinalizedAgreement = currentAgreement?.status === "finalized" && (!currentAgreement?.validUntil || isTimestampStillValid(currentAgreement.validUntil))
+  const hasActiveCredential = currentCredential?.status === "active" && (!currentCredential?.expiresAt || isTimestampStillValid(currentCredential.expiresAt))
+  const canConsumeAsset = Boolean(
+    user &&
+    asset &&
+    asset.active !== false &&
+    (
+      canManageAsset ||
+      (isDataClient && hasActiveConnection && hasActiveMembership && hasFinalizedAgreement && hasActiveCredential)
+    ),
+  )
 
   // Fetch CPS Fixed Data from API header (id, type, location, status, speed, protocol)
   useEffect(() => {
@@ -304,8 +632,22 @@ export default function AssetDetailsPage() {
   // Fetch dynamic data from API
   const fetchDynamicData = async () => {
     if (!asset?.apiEndpoint) return;
+    if (currentAccessToken && !isTimestampStillValid(currentAccessToken.expiresAt ?? null)) {
+      setIsQuerying(false)
+      setToastMsg("The short-lived access token expired. Start a new query to issue a fresh token.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
     try {
-      const res = await fetch(asset.apiEndpoint)
+      const headers: HeadersInit = currentAccessToken?.token
+        ? {
+            Accept: "application/json, text/plain, */*",
+            Authorization: `Bearer ${currentAccessToken.token}`,
+            "X-Dataspace-Token": currentAccessToken.token,
+          }
+        : { Accept: "application/json, text/plain, */*" }
+      const res = await fetch(asset.apiEndpoint, { headers })
       if (!res.ok) throw new Error(`Error fetching data: ${res.status}`)
       const data = await res.json() // 'data' é a resposta crua da API
 
@@ -411,7 +753,7 @@ export default function AssetDetailsPage() {
       if (intervalRef.current) clearInterval(intervalRef.current)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isQuerying, asset?.apiEndpoint])
+  }, [isQuerying, asset?.apiEndpoint, currentAccessToken?.token, currentAccessToken?.expiresAt])
 
   // Pagination for real-time data (20 rows per page)
   const pageSize = 20
@@ -440,10 +782,13 @@ export default function AssetDetailsPage() {
   }
 
   // Edição
-  const handleEdit = () => setIsEditing(true)
+  const handleEdit = () => {
+    if (!canManageAsset) return
+    setIsEditing(true)
+  }
 
   const handleSave = async () => {
-    if (!editForm || !asset) return
+    if (!editForm || !asset || !canManageAsset) return
     try {
       const docRef = doc(db, "assets", asset.id)
       await updateDoc(docRef, {
@@ -469,11 +814,12 @@ export default function AssetDetailsPage() {
 
   // Toast de confirmação de delete
   const handleDelete = () => {
+    if (!canManageAsset) return
     setShowDeleteToast(true)
   }
 
   const confirmDelete = async () => {
-    if (!asset) return
+    if (!asset || !canManageAsset) return
     try {
       setIsDeleting(true)
       setShowDeleteToast(false)
@@ -499,6 +845,80 @@ export default function AssetDetailsPage() {
     }
   }
 
+  const publishToCatalog = async () => {
+    if (!asset || !canManageAsset) return
+    if (!profile?.participantId || !profile?.connectorDspBaseUrl) {
+      setToastMsg("Configure the provider connector profile before publishing this asset.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
+    try {
+      await updateDoc(doc(db, "assets", asset.id), {
+        publishedInCatalog: true,
+        status: "published",
+        updatedAt: serverTimestamp(),
+      })
+      await setDoc(doc(db, "catalogPublications", `asset-${asset.id}`), {
+        scope: "asset",
+        scopeId: asset.id,
+        connectorParticipantId: currentConnection?.providerParticipantId ?? profile?.participantId ?? asset.ownerId ?? "",
+        dspEndpoint: profile?.connectorDspBaseUrl ?? "",
+        catalogEndpoint: profile?.federatedCatalogUrl ?? "",
+        published: true,
+        lastPublishedAt: serverTimestamp(),
+        ownerId: asset.ownerId ?? "",
+        ownerEmail: asset.ownerEmail ?? "",
+        ownerName: asset.ownerName ?? "",
+      })
+      setAsset({ ...asset, publishedInCatalog: true, status: "published" })
+      setEditForm((current) => (current ? { ...current, publishedInCatalog: true, status: "published" } : current))
+      setToastMsg("Asset metadata published to the federated catalog.")
+      setToastError(false)
+      setShowToast(true)
+    } catch {
+      setToastMsg("Could not publish this asset to the catalog.")
+      setToastError(true)
+      setShowToast(true)
+    }
+  }
+
+  const unpublishFromCatalog = async () => {
+    if (!asset || !canManageAsset) return
+
+    try {
+      await updateDoc(doc(db, "assets", asset.id), {
+        publishedInCatalog: false,
+        status: asset.active === false ? "inactive" : "draft",
+        updatedAt: serverTimestamp(),
+      })
+      await setDoc(doc(db, "catalogPublications", `asset-${asset.id}`), {
+        scope: "asset",
+        scopeId: asset.id,
+        connectorParticipantId: currentConnection?.providerParticipantId ?? profile?.participantId ?? asset.ownerId ?? "",
+        dspEndpoint: profile?.connectorDspBaseUrl ?? "",
+        catalogEndpoint: profile?.federatedCatalogUrl ?? "",
+        published: false,
+        lastPublishedAt: serverTimestamp(),
+        ownerId: asset.ownerId ?? "",
+        ownerEmail: asset.ownerEmail ?? "",
+        ownerName: asset.ownerName ?? "",
+      })
+      setAsset({ ...asset, publishedInCatalog: false, status: asset.active === false ? "inactive" : "draft" })
+      setEditForm((current) => (
+        current ? { ...current, publishedInCatalog: false, status: asset.active === false ? "inactive" : "draft" } : current
+      ))
+      setToastMsg("Asset metadata removed from the federated catalog.")
+      setToastError(false)
+      setShowToast(true)
+    } catch {
+      setToastMsg("Could not unpublish this asset from the catalog.")
+      setToastError(true)
+      setShowToast(true)
+    }
+  }
+
   const handleStartQuery = async () => {
     if (!asset) {
       return
@@ -512,7 +932,53 @@ export default function AssetDetailsPage() {
       return
     }
 
+    if (!canConsumeAsset) {
+      setShowCompliance(false)
+      setToastMsg("Active connector connection, federation membership, finalized agreement, and active credential are required before consumption.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
+    if (!governancePolicy) {
+      setShowCompliance(false)
+      setToastMsg("The asset governance policy is missing, so token issuance is blocked.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
     try {
+      const expiresAt = new Date(Date.now() + accessTokenTtlMinutes * 60 * 1000)
+      const accessTokenValue = `dsp_${crypto.randomUUID().replace(/-/g, "")}`
+      const tokenRef = await addDoc(collection(db, "accessTokens"), {
+        token: accessTokenValue,
+        scope: "asset.read",
+        assetId: asset.id,
+        federationId: asset.federationId ?? "",
+        agreementId: currentAgreement?.id ?? "",
+        credentialGrantId: currentCredential?.id ?? "",
+        connectorConnectionId: currentConnection?.id ?? "",
+        requesterId: user.uid,
+        requesterEmail: user.email ?? "",
+        ownerId: asset.ownerId ?? "",
+        ownerEmail: asset.ownerEmail ?? "",
+        ownerName: asset.ownerName ?? "",
+        governancePolicyId: governancePolicy.id,
+        status: "active",
+        issuedAt: serverTimestamp(),
+        expiresAt,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+
+      setCurrentAccessToken({
+        id: tokenRef.id,
+        token: accessTokenValue,
+        status: "active",
+        expiresAt,
+      })
+
       await addDoc(collection(db, "accessLogs"), {
         assetId: asset.id,
         assetName: asset.name,
@@ -524,6 +990,10 @@ export default function AssetDetailsPage() {
         brokerUrl,
         status: "started",
         contractAccepted: true,
+        connectorConnectionId: currentConnection?.id ?? "",
+        contractAgreementId: currentAgreement?.id ?? "",
+        credentialGrantId: currentCredential?.id ?? "",
+        accessTokenId: tokenRef.id,
         startedAt: serverTimestamp(),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -531,9 +1001,10 @@ export default function AssetDetailsPage() {
         ...buildOwnershipFields(user),
       })
     } catch {
-      setToastMsg("Audit log could not be persisted, but the query will proceed.")
+      setToastMsg("Token issuance or audit persistence failed. The direct query remains blocked.")
       setToastError(true)
       setShowToast(true)
+      return
     }
 
     setShowCompliance(false)
@@ -553,10 +1024,15 @@ export default function AssetDetailsPage() {
     { key: "name", label: "Name" },
     { key: "description", label: "Description" },
     { key: "assetType", label: "Type" },
+    { key: "assetKind", label: "Asset Kind" },
     { key: "purpose", label: "Purpose" },
     { key: "semanticId", label: "Semantic ID" },
+    { key: "aasId", label: "AAS ID" },
+    { key: "irdi", label: "IRDI / ECLASS" },
+    { key: "semanticModel", label: "Semantic Model" },
     { key: "apiEndpoint", label: "API Endpoint" },
     { key: "dataFormat", label: "Data Format" },
+    { key: "exchangeMode", label: "Exchange Mode" },
     { key: "accessType", label: "Access" },
     { key: "licenseType", label: "License" },
     { key: "location", label: "Location" },
@@ -606,6 +1082,204 @@ export default function AssetDetailsPage() {
     )
   }
 
+  const publishContractOffer = async () => {
+    if (!asset || !canManageAsset) return
+    if (!governancePolicy) {
+      setToastMsg("Create the asset governance policy before publishing a contract offer.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
+    try {
+      await addDoc(collection(db, "contractOffers"), {
+        scope: "asset",
+        scopeId: asset.id,
+        federationId: asset.federationId ?? "",
+        assetId: asset.id,
+        ownerId: asset.ownerId ?? "",
+        ownerEmail: asset.ownerEmail ?? "",
+        ownerName: asset.ownerName ?? "",
+        policyType: "contract",
+        policyPayload: {
+          purpose: asset.purpose,
+          accessType: asset.accessType ?? "",
+          dataFormat: asset.dataFormat ?? "",
+          exchangeMode: asset.exchangeMode ?? "",
+          semanticId: asset.semanticId ?? "",
+          aasId: asset.aasId ?? "",
+          irdi: asset.irdi ?? "",
+          governancePolicyId: governancePolicy.id,
+          governancePolicies: governancePolicy.policies ?? "",
+          usagePeriods: governancePolicy.usagePeriods ?? "",
+          revocation: governancePolicy.revocation ?? "",
+          purposeBinding: governancePolicy.purposeBinding !== false,
+          requiresManualApproval: governancePolicy.requiresManualApproval !== false,
+          validForHours: agreementTtlHours,
+          accessTokenTtlMinutes,
+          revocable: governancePolicy.revocationMode !== "time-expiry",
+        },
+        visibility: "members",
+        status: "published",
+        version: contractOffers.length + 1,
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+      setToastMsg("Standard contract offer published.")
+      setToastError(false)
+      setShowToast(true)
+      setAccessVersion((value) => value + 1)
+    } catch {
+      setToastMsg("Could not publish the contract offer.")
+      setToastError(true)
+      setShowToast(true)
+    }
+  }
+
+  const requestAgreement = async () => {
+    if (!asset || !user || !profile || !isDataClient) return
+
+    if (!hasActiveConnection) {
+      setToastMsg("Activate the connector connection before requesting an asset contract.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
+    if (!governancePolicy) {
+      setToastMsg("The asset governance policy is missing, so the access request cannot be negotiated yet.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
+    if (!hasActiveMembership) {
+      setToastMsg("Join the federation before requesting an asset contract.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
+    if (!publishedOffer) {
+      setToastMsg("This asset has no published contract offer yet.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
+    if (currentAgreement && ["requested", "negotiating", "finalized"].includes(currentAgreement.status)) {
+      setToastMsg("You already have an agreement process for this asset.")
+      setToastError(true)
+      setShowToast(true)
+      return
+    }
+
+    try {
+      await addDoc(collection(db, "contractAgreements"), {
+        offerId: publishedOffer.id,
+        federationId: asset.federationId ?? "",
+        assetId: asset.id,
+        assetName: asset.name,
+        providerParticipantId: currentConnection?.providerParticipantId ?? asset.ownerId ?? "",
+        consumerParticipantId: currentConnection?.consumerParticipantId ?? profile.participantId ?? user.uid,
+        connectorConnectionId: currentConnection?.id ?? "",
+        agreementType: "asset",
+        status: "requested",
+        requesterId: user.uid,
+        requesterEmail: user.email ?? "",
+        requesterName: profile.name ?? user.displayName ?? user.email ?? user.uid,
+        ownerId: asset.ownerId ?? "",
+        ownerEmail: asset.ownerEmail ?? "",
+        ownerName: asset.ownerName ?? "",
+        governancePolicyId: governancePolicy.id,
+        purposeBindingAccepted: governancePolicy.purposeBinding !== false,
+        signedByConsumerAt: serverTimestamp(),
+        createdAt: serverTimestamp(),
+        updatedAt: serverTimestamp(),
+      })
+      setToastMsg("Contract agreement request submitted.")
+      setToastError(false)
+      setShowToast(true)
+      setAccessVersion((value) => value + 1)
+    } catch {
+      setToastMsg("Could not request the contract agreement.")
+      setToastError(true)
+      setShowToast(true)
+    }
+  }
+
+  const updateAgreementStatus = async (agreement: ContractAgreement, status: "finalized" | "rejected") => {
+    if (!asset || !canManageAsset) return
+
+    try {
+      if (status === "finalized" && !governancePolicy) {
+        setToastMsg("A governance policy is required before approving asset access.")
+        setToastError(true)
+        setShowToast(true)
+        return
+      }
+
+      const validUntil = new Date(Date.now() + agreementTtlHours * 60 * 60 * 1000)
+      await updateDoc(doc(db, "contractAgreements", agreement.id), {
+        status,
+        updatedAt: serverTimestamp(),
+        signedByProviderAt: status === "finalized" ? serverTimestamp() : null,
+        validFrom: status === "finalized" ? serverTimestamp() : null,
+        validUntil: status === "finalized" ? validUntil : null,
+        governancePolicyId: governancePolicy?.id ?? "",
+      })
+
+      if (status === "finalized") {
+        await addDoc(collection(db, "credentialGrants"), {
+          participantId: agreement.requesterId ?? "",
+          requesterId: agreement.requesterId ?? "",
+          requesterEmail: agreement.requesterEmail ?? "",
+          agreementId: agreement.id,
+          assetId: asset.id,
+          federationId: asset.federationId ?? "",
+          credentialType: "usage",
+          status: "active",
+          issuedAt: serverTimestamp(),
+          expiresAt: validUntil,
+          createdAt: serverTimestamp(),
+          updatedAt: serverTimestamp(),
+          ownerId: asset.ownerId ?? "",
+          ownerEmail: asset.ownerEmail ?? "",
+          ownerName: asset.ownerName ?? "",
+        })
+      }
+
+      setToastMsg(status === "finalized" ? "Agreement finalized and credential issued." : "Agreement rejected.")
+      setToastError(false)
+      setShowToast(true)
+      setAccessVersion((value) => value + 1)
+    } catch {
+      setToastMsg("Could not update the agreement status.")
+      setToastError(true)
+      setShowToast(true)
+    }
+  }
+
+  const updateCredentialStatus = async (credential: CredentialGrant, status: "revoked" | "expired") => {
+    if (!canManageAsset) return
+
+    try {
+      await updateDoc(doc(db, "credentialGrants", credential.id), {
+        status,
+        updatedAt: serverTimestamp(),
+        revokedAt: status === "revoked" ? serverTimestamp() : null,
+      })
+      setToastMsg(status === "revoked" ? "Usage credential revoked." : "Usage credential marked as expired.")
+      setToastError(false)
+      setShowToast(true)
+      setAccessVersion((value) => value + 1)
+    } catch {
+      setToastMsg("Could not update the usage credential.")
+      setToastError(true)
+      setShowToast(true)
+    }
+  }
+
   return (
     <>
      <div className="flex justify-between items-center mb-6 mt-4 container mx-auto">
@@ -650,7 +1324,7 @@ export default function AssetDetailsPage() {
           <h1 className="text-3xl font-bold text-gray-800">Asset Details</h1>
         </div>
         <div className="flex gap-2">
-          {!isEditing ? (
+          {canManageAsset && !isEditing ? (
             <>
               <button
                 onClick={handleEdit}
@@ -669,6 +1343,16 @@ export default function AssetDetailsPage() {
                 {asset.active ? "Deactivate" : "Activate"}
               </button>
               <button
+                onClick={asset.publishedInCatalog ? unpublishFromCatalog : publishToCatalog}
+                className={`px-4 py-2 rounded-md font-semibold ${
+                  asset.publishedInCatalog
+                    ? "bg-slate-700 text-white hover:bg-slate-800"
+                    : "bg-indigo-600 text-white hover:bg-indigo-700"
+                }`}
+              >
+                {asset.publishedInCatalog ? "Unpublish Catalog" : "Publish Catalog"}
+              </button>
+              <button
                 onClick={handleDelete}
                 disabled={isDeleting}
                 className="bg-red-600 text-white px-4 py-2 rounded-md hover:bg-red-700 font-semibold disabled:opacity-50"
@@ -676,7 +1360,7 @@ export default function AssetDetailsPage() {
                 {isDeleting ? "Deleting..." : "Delete"}
               </button>
             </>
-          ) : (
+          ) : canManageAsset ? (
             <>
               <button
                 onClick={handleSave}
@@ -691,7 +1375,12 @@ export default function AssetDetailsPage() {
                 Cancel
               </button>
             </>
-          )}
+          ) : null}
+          {!canManageAsset && asset.ownerId ? (
+            <div className="rounded-md border border-gray-200 bg-gray-50 px-4 py-2 text-sm text-gray-600">
+              Read-only view. Only the owning Data Owner can edit this asset.
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -726,6 +1415,168 @@ export default function AssetDetailsPage() {
         </div>
       </div>
 
+      {!isEditing && (
+        <div className="bg-white rounded-lg shadow-sm border p-6 mb-8">
+          <h2 className="text-xl font-semibold mb-4">Contracts & Credentials</h2>
+          <div className="grid gap-6 lg:grid-cols-[1.1fr_0.9fr]">
+            <div>
+              {accessModelLoading ? (
+                <p className="text-sm text-gray-500">Loading access prerequisites...</p>
+              ) : (
+                <div className="space-y-4">
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
+                    <p><span className="font-medium">Governance policy:</span> {governancePolicy ? "attached" : "missing"}</p>
+                    <p><span className="font-medium">Catalog publication:</span> {asset.publishedInCatalog ? "published" : "not published"}</p>
+                    <p><span className="font-medium">Connector connection:</span> {canManageAsset ? "owner context" : currentConnection?.status ?? "missing"}</p>
+                    <p className="mt-1"><span className="font-medium">Federation membership:</span> {canManageAsset ? "owner context" : hasActiveMembership ? "active" : "missing"}</p>
+                    <p className="mt-1"><span className="font-medium">Published offer:</span> {publishedOffer ? `v${publishedOffer.version ?? 1}` : "missing"}</p>
+                    <p className="mt-1"><span className="font-medium">Agreement:</span> {canManageAsset ? "owner context" : currentAgreement?.status ?? "none"}</p>
+                    <p className="mt-1"><span className="font-medium">Credential:</span> {canManageAsset ? "owner context" : currentCredential?.status ?? "none"}</p>
+                    <p className="mt-1"><span className="font-medium">Access token:</span> {currentAccessToken?.status ?? "none"}</p>
+                  </div>
+
+                  {governancePolicy ? (
+                    <div className="rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm text-blue-900">
+                      <p className="font-medium">Asset governance policy</p>
+                      <p className="mt-1">Manual approval: {governancePolicy.requiresManualApproval === false ? "optional" : "required"}</p>
+                      <p className="mt-1">Purpose binding: {governancePolicy.purposeBinding === false ? "optional" : "required"}</p>
+                      <p className="mt-1">Agreement lifetime: {agreementTtlHours} hour(s)</p>
+                      <p className="mt-1">Access token lifetime: {accessTokenTtlMinutes} minute(s)</p>
+                      {governancePolicy.revocationMode ? <p className="mt-1">Revocation mode: {governancePolicy.revocationMode}</p> : null}
+                    </div>
+                  ) : (
+                    <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+                      No governance policy is attached to this asset yet. Create one before publishing or approving asset access.
+                    </div>
+                  )}
+
+                  {isDataClient ? (
+                    <div className="space-y-3">
+                      {!hasActiveConnection && asset.federationId ? (
+                        <p className="text-sm text-amber-700">
+                          Connect your consumer connector first in{" "}
+                          <Link href={`/federations/${asset.federationId}`} className="font-medium underline">
+                            federation details
+                          </Link>
+                          .
+                        </p>
+                      ) : null}
+                      {!hasActiveMembership && asset.federationId ? (
+                        <p className="text-sm text-amber-700">
+                          Join the federation first in{" "}
+                          <Link href={`/federations/${asset.federationId}`} className="font-medium underline">
+                            federation details
+                          </Link>
+                          .
+                        </p>
+                      ) : null}
+                      <button
+                        type="button"
+                        onClick={requestAgreement}
+                        disabled={!hasActiveConnection || !hasActiveMembership || !publishedOffer || currentAgreement?.status === "requested" || currentAgreement?.status === "finalized"}
+                        className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                      >
+                        {currentAgreement?.status === "finalized"
+                          ? "Agreement ready"
+                          : currentAgreement?.status === "requested"
+                            ? "Agreement requested"
+                            : "Request contract agreement"}
+                      </button>
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
+
+            <div className="space-y-6">
+              {canManageAsset ? (
+                <>
+                  <div className="rounded-xl border border-gray-200 bg-gray-50 p-4">
+                    <h3 className="font-semibold text-gray-900 mb-3">Owner actions</h3>
+                    <button
+                      type="button"
+                      onClick={publishContractOffer}
+                      disabled={Boolean(publishedOffer)}
+                      className="rounded-md bg-blue-600 px-4 py-2 text-sm font-medium text-white hover:bg-blue-700 disabled:opacity-50"
+                    >
+                      {publishedOffer ? "Standard offer published" : "Publish standard contract offer"}
+                    </button>
+                  </div>
+
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-3">Asset access requests</h3>
+                    {assetAgreements.length === 0 ? (
+                      <p className="text-sm text-gray-500">No asset access requests for this asset yet.</p>
+                    ) : (
+                      <ul className="space-y-3">
+                        {assetAgreements.map((agreement) => (
+                          <li key={agreement.id} className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                            <p className="font-medium text-gray-900">{agreement.requesterName ?? agreement.requesterEmail ?? agreement.requesterId}</p>
+                            <p className="mt-1 text-xs text-gray-500">Status: {agreement.status}</p>
+                            {agreement.status === "requested" ? (
+                              <div className="mt-3 flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => updateAgreementStatus(agreement, "finalized")}
+                                  className="rounded-md bg-green-600 px-3 py-2 text-xs font-medium text-white hover:bg-green-700"
+                                >
+                                  Finalize
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => updateAgreementStatus(agreement, "rejected")}
+                                  className="rounded-md bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700"
+                                >
+                                  Reject
+                                </button>
+                              </div>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+
+                  <div>
+                    <h3 className="font-semibold text-gray-900 mb-3">Issued credentials</h3>
+                    {assetCredentials.length === 0 ? (
+                      <p className="text-sm text-gray-500">No credentials issued for this asset.</p>
+                    ) : (
+                      <ul className="space-y-3">
+                        {assetCredentials.map((credential) => (
+                          <li key={credential.id} className="rounded-lg border border-gray-200 bg-gray-50 p-4">
+                            <p className="font-medium text-gray-900">{credential.requesterEmail ?? credential.requesterId}</p>
+                            <p className="mt-1 text-xs text-gray-500">
+                              {credential.credentialType ?? "usage"} · {credential.status}
+                              {credential.expiresAt && isTimestampStillValid(credential.expiresAt)
+                                ? ` · valid until ${credential.expiresAt instanceof Date ? credential.expiresAt.toLocaleString() : credential.expiresAt.toDate?.().toLocaleString()}`
+                                : ""}
+                            </p>
+                            {credential.status === "active" ? (
+                              <div className="mt-3 flex gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => updateCredentialStatus(credential, "revoked")}
+                                  className="rounded-md bg-red-600 px-3 py-2 text-xs font-medium text-white hover:bg-red-700"
+                                >
+                                  Revoke credential
+                                </button>
+                              </div>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <p className="text-sm text-gray-500">Contract publication and approval actions are available to the owning Data Owner.</p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Control buttons */}
       {!isEditing && (
         <div className="mb-4">
@@ -738,7 +1589,7 @@ export default function AssetDetailsPage() {
           <div className="flex gap-4 items-center">
           <button
             onClick={() => setShowCompliance(true)}
-            disabled={isQuerying || asset.active === false || authLoading || !user}
+            disabled={isQuerying || !canConsumeAsset || authLoading || !user}
             className="bg-blue-600 text-white px-4 py-2 rounded-md hover:bg-blue-700 disabled:opacity-50"
           >
             Start Query
@@ -756,11 +1607,23 @@ export default function AssetDetailsPage() {
             Stop Query
           </button>
           {showBrokerUrl && (
-            <span className="ml-4 text-sm bg-gray-100 px-3 py-2 rounded border border-gray-300 text-gray-700 select-all">
-              <b>Broker API:</b> {brokerUrl}
-            </span>
+            <div className="ml-4 flex flex-col gap-2 text-sm">
+              <span className="bg-gray-100 px-3 py-2 rounded border border-gray-300 text-gray-700 select-all">
+                <b>Broker API:</b> {brokerUrl}
+              </span>
+              {currentAccessToken?.token ? (
+                <span className="bg-blue-50 px-3 py-2 rounded border border-blue-200 text-blue-900 select-all">
+                  <b>Access Token:</b> {currentAccessToken.token}
+                </span>
+              ) : null}
+            </div>
           )}
           </div>
+          {!canConsumeAsset ? (
+            <p className="mt-3 text-sm text-amber-700">
+              Consumption is blocked until the consumer has an active connector connection, an active federation membership, a finalized contract agreement, and an active usage credential.
+            </p>
+          ) : null}
         </div>
       )}
 

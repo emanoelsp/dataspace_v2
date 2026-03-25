@@ -2,7 +2,8 @@ import type React from "react"
 import type { Metadata } from "next"
 import "./globals.css"
 import Header from "../components/header"
-import Nav from "../components/nav";
+import Nav from "../components/nav"
+import RouteGuard from "@/components/route-guard"
 
 export const metadata: Metadata = {
   title: "Dataspace - Advanced Manufacturing",
@@ -25,7 +26,7 @@ export default function RootLayout({
         
         {/* Conteúdo principal com padding para compensar a altura dos elementos fixos */}
         <main>
-          {children}
+          <RouteGuard>{children}</RouteGuard>
         </main>
       </body>
     </html>

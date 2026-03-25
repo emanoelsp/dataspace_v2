@@ -6,6 +6,7 @@ import { db } from "@/lib/firebase"
 import { CheckCircle, Building, Layers, Users, FileText, ChevronLeft, X } from "lucide-react"
 import Link from "next/link"
 import { buildOwnershipFields, sanitizeCsvText, sanitizeMultilineText, sanitizeText, sanitizeUrl } from "@/lib/dataspace"
+import { ADMISSION_MODES, CATALOG_VISIBILITIES, mapLegacyFederationType } from "@/lib/intra-dataspace"
 import { useAuthUser } from "@/lib/use-auth-user"
 
 const steps = [
@@ -111,6 +112,8 @@ export default function CreateFederationPage() {
 
   // Federation Structure
   const [federationType, setFederationType] = useState("")
+  const [catalogVisibility, setCatalogVisibility] = useState("")
+  const [admissionMode, setAdmissionMode] = useState("")
   const [dataDomains, setDataDomains] = useState("")
   const [mainDomain, setMainDomain] = useState("")
 
@@ -125,8 +128,19 @@ export default function CreateFederationPage() {
 
   const isStep1Valid = () => name.trim() !== "" && description.trim() !== "" && organization.trim() !== ""
   const isStep2Valid = () =>
-    federationType.trim() !== "" && dataDomains.trim() !== "" && mainDomain.trim() !== ""
+    federationType.trim() !== "" &&
+    catalogVisibility.trim() !== "" &&
+    admissionMode.trim() !== "" &&
+    dataDomains.trim() !== "" &&
+    mainDomain.trim() !== ""
   const isStep3Valid = () => contactEmail.trim() !== ""
+
+  const handleFederationTypeChange = (value: string) => {
+    setFederationType(value)
+    const mapped = mapLegacyFederationType(value)
+    setCatalogVisibility(mapped.catalogVisibility)
+    setAdmissionMode(mapped.admissionMode)
+  }
 
   const handleNext = () => {
     if (step === 1 && isStep1Valid()) setStep(2)
@@ -164,10 +178,14 @@ export default function CreateFederationPage() {
         description: sanitizeMultilineText(description),
         organization: sanitizeText(organization),
         federationType: sanitizeText(federationType),
+        catalogVisibility: sanitizeText(catalogVisibility),
+        admissionMode: sanitizeText(admissionMode),
         dataDomains: sanitizeCsvText(dataDomains),
         mainDomain: sanitizeText(mainDomain),
         contactEmail: contactEmail.trim().toLowerCase(),
         website: normalizedWebsite,
+        publishedInCatalog: false,
+        status: "draft",
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
         ...buildOwnershipFields(user),
@@ -253,7 +271,7 @@ export default function CreateFederationPage() {
                 <label className="block text-sm font-medium text-gray-700 mb-1">Federation Type *</label>
                 <select
                   value={federationType}
-                  onChange={(e) => setFederationType(e.target.value)}
+                  onChange={(e) => handleFederationTypeChange(e.target.value)}
                   required
                   className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
                 >
@@ -262,6 +280,40 @@ export default function CreateFederationPage() {
                   <option value="Consortium">Consortium (invite only)</option>
                   <option value="Private">Private (restricted access)</option>
                 </select>
+              </div>
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Catalog Visibility *</label>
+                  <select
+                    value={catalogVisibility}
+                    onChange={(e) => setCatalogVisibility(e.target.value)}
+                    required
+                    className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                  >
+                    <option value="">-- Select Visibility --</option>
+                    {CATALOG_VISIBILITIES.map((value) => (
+                      <option key={value} value={value}>
+                        {value === "public" ? "Public catalog" : value === "members" ? "Members only" : "Hidden"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1">Admission Mode *</label>
+                  <select
+                    value={admissionMode}
+                    onChange={(e) => setAdmissionMode(e.target.value)}
+                    required
+                    className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                  >
+                    <option value="">-- Select Admission --</option>
+                    {ADMISSION_MODES.map((value) => (
+                      <option key={value} value={value}>
+                        {value === "self-service" ? "Self-service" : value === "approval" ? "Approval required" : "Invite only"}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Data Domains *</label>
@@ -379,6 +431,8 @@ export default function CreateFederationPage() {
               <section className="mb-6">
                 <h2 className="font-semibold text-lg mb-1">2. Federation Structure</h2>
                 <p><strong>Type:</strong> {federationType || <span className="text-gray-400">N/A</span>}</p>
+                <p><strong>Catalog Visibility:</strong> {catalogVisibility || <span className="text-gray-400">N/A</span>}</p>
+                <p><strong>Admission Mode:</strong> {admissionMode || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Data Domains:</strong> {dataDomains || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Main Domain of Expertise:</strong> {mainDomain || <span className="text-gray-400">N/A</span>}</p>
               </section>
