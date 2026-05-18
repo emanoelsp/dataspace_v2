@@ -268,6 +268,7 @@ export async function fillGovernanceWizard(
 
   await page.locator("#gov-usage").waitFor({ state: "visible", timeout: 15_000 })
   await page.locator("#gov-usage").fill("Continuous — shift hours only.")
+  await page.locator("#gov-token-ttl").fill(String(ctx.tokenTtlMinutes))
   await page.getByRole("button", { name: "Next: Revocation & Supervision" }).click()
 
   await page.locator("#gov-revocation").waitFor({ state: "visible", timeout: 15_000 })

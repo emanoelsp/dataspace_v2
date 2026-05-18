@@ -458,8 +458,9 @@ export default function GovernanceCreatePage() {
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Agreement lifetime (hours) *</label>
+                <label htmlFor="gov-agreement-ttl" className="block text-sm font-medium text-gray-700 mb-1">Agreement lifetime (hours) *</label>
                 <input
+                  id="gov-agreement-ttl"
                   type="number"
                   min={1}
                   value={agreementTtlHours}
@@ -468,8 +469,9 @@ export default function GovernanceCreatePage() {
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Access token lifetime (minutes) *</label>
+                <label htmlFor="gov-token-ttl" className="block text-sm font-medium text-gray-700 mb-1">Access token lifetime (minutes) *</label>
                 <input
+                  id="gov-token-ttl"
                   type="number"
                   min={1}
                   value={accessTokenTtlMinutes}
