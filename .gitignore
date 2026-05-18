@@ -1,4 +1,9 @@
 node_modules/
+.DS_Store
+.next/
 playwright-report/
 playwright-report-remote/
 test-results/
+Artigo ICE/
+Usados Quali/
+api-equipment/
