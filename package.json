@@ -1,0 +1,7 @@
+{
+  "name": "dataspace-monorepo",
+  "private": true,
+  "dependencies": {
+    "next": "^15.1.11"
+  }
+}
