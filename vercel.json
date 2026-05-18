@@ -1,6 +1,0 @@
-{
-  "installCommand": "cd dataspaceapp && npm install",
-  "buildCommand": "cd dataspaceapp && npm run build",
-  "outputDirectory": "dataspaceapp/.next",
-  "framework": "nextjs"
-}
