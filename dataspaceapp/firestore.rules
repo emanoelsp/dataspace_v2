@@ -1,0 +1,138 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function ownsResource(data) {
+      return signedIn() && (
+        !("ownerId" in data) ||
+        data.ownerId == null ||
+        data.ownerId == "" ||
+        data.ownerId == request.auth.uid
+      );
+    }
+
+    function isParticipant(data) {
+      return signedIn() && (
+        (("requesterId" in data) && data.requesterId == request.auth.uid) ||
+        (("assetOwnerId" in data) && data.assetOwnerId == request.auth.uid) ||
+        (("ownerId" in data) && data.ownerId == request.auth.uid)
+      );
+    }
+
+    match /users/{userId} {
+      allow read, create, update: if signedIn() && request.auth.uid == userId;
+      allow delete: if false;
+    }
+
+    match /connectorProfiles/{docId} {
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read, update, delete: if ownsResource(resource.data);
+    }
+
+    match /federations/{docId} {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if ownsResource(resource.data);
+    }
+
+    match /assets/{docId} {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if ownsResource(resource.data);
+    }
+
+    match /compliance/{docId} {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if ownsResource(resource.data);
+    }
+
+    match /governance/{docId} {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if ownsResource(resource.data);
+    }
+
+    match /accessRequests/{docId} {
+      allow create: if signedIn() && request.resource.data.requesterId == request.auth.uid;
+      allow read: if isParticipant(resource.data);
+      // Only the asset owner approves/rejects; requester keeps read + delete own pending if needed
+      allow update: if signedIn() && resource.data.assetOwnerId == request.auth.uid;
+      allow delete: if signedIn() && resource.data.requesterId == request.auth.uid;
+    }
+
+    match /accessLogs/{docId} {
+      allow create: if signedIn() && request.resource.data.requesterId == request.auth.uid;
+      allow read: if isParticipant(resource.data);
+      allow update, delete: if false;
+    }
+
+    match /connectorConnections/{docId} {
+      allow create: if signedIn() && (
+        request.resource.data.requesterId == request.auth.uid ||
+        request.resource.data.ownerId == request.auth.uid
+      );
+      allow read, update: if isParticipant(resource.data);
+      allow delete: if false;
+    }
+
+    match /federationMemberships/{docId} {
+      allow create: if signedIn() && (
+        request.resource.data.requesterId == request.auth.uid ||
+        request.resource.data.ownerId == request.auth.uid
+      );
+      allow read, update: if isParticipant(resource.data);
+      allow delete: if signedIn() && ownsResource(resource.data);
+    }
+
+    match /federationInvites/{docId} {
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read, update: if ownsResource(resource.data) || (
+        signedIn() &&
+        ("inviteeEmail" in resource.data) &&
+        resource.data.inviteeEmail == request.auth.token.email
+      );
+      allow delete: if ownsResource(resource.data);
+    }
+
+    match /contractOffers/{docId} {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if ownsResource(resource.data);
+    }
+
+    match /contractAgreements/{docId} {
+      allow create: if signedIn() && (
+        request.resource.data.requesterId == request.auth.uid ||
+        request.resource.data.ownerId == request.auth.uid
+      );
+      allow read, update: if isParticipant(resource.data);
+      allow delete: if false;
+    }
+
+    match /credentialGrants/{docId} {
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read, update: if isParticipant(resource.data);
+      allow delete: if false;
+    }
+
+    match /accessTokens/{docId} {
+      allow create: if signedIn() && (
+        request.resource.data.requesterId == request.auth.uid ||
+        request.resource.data.ownerId == request.auth.uid
+      );
+      allow read, update: if isParticipant(resource.data);
+      allow delete: if false;
+    }
+
+    match /catalogPublications/{docId} {
+      allow read: if true;
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow update, delete: if ownsResource(resource.data);
+    }
+  }
+}

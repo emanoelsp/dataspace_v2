@@ -1,0 +1,13 @@
+{
+  "indexes": [
+    {
+      "collectionGroup": "accessRequests",
+      "queryScope": "COLLECTION",
+      "fields": [
+        { "fieldPath": "assetOwnerId", "order": "ASCENDING" },
+        { "fieldPath": "createdAt", "order": "DESCENDING" }
+      ]
+    }
+  ],
+  "fieldOverrides": []
+}
