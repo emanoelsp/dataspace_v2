@@ -171,6 +171,22 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
     for (let i = 0; i < checkCount; i++) {
       await checks.nth(i).check()
     }
+    // Intercept the push-token request to capture sidecarUrl and response
+    const pushTokenPromise = page.waitForResponse(
+      (res) => res.url().includes("/api/sidecar/push-token"),
+      { timeout: 30_000 },
+    ).then(async (res) => {
+      const req = res.request()
+      let body: Record<string, unknown> = {}
+      try { body = JSON.parse(req.postData() ?? "{}") as Record<string, unknown> } catch { /* ignore */ }
+      const status = res.status()
+      let resBody = ""
+      try { resBody = await res.text() } catch { /* ignore */ }
+      console.log(`[E2E] push-token → status ${status}, sidecarUrl: ${body.sidecarUrl as string ?? "(not sent)"}, response: ${resBody.slice(0, 200)}`)
+    }).catch((e: unknown) => {
+      console.warn(`[E2E] push-token request not captured: ${String(e)}`)
+    })
+
     await page.getByRole("button", { name: /Confirm and Start Query/i }).click()
 
     // Broker API label appears when token is active and pushed
@@ -178,26 +194,36 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
       page.locator("b", { hasText: "Broker API:" }),
     ).toBeVisible({ timeout: 90_000 })
 
-    // Allow async sidecar push to complete
-    await page.waitForTimeout(4_000)
+    await pushTokenPromise
 
     // ── 14. Verify sidecar received the 5-min token ────────────────────────────
-    const sidecarTokensRes = await page.request
-      .get(`${ctx.sidecarUrl}/api/tokens`, {
-        headers: { Authorization: "Bearer admin" },
-      })
-      .catch(() => null)
+    console.log(`[E2E] Sidecar URL: ${ctx.sidecarUrl}`)
 
-    if (sidecarTokensRes?.ok()) {
-      const sidecarData = await sidecarTokensRes.json()
-      const allTokens: Array<{
-        status: string
-        dataClientId: string
-        equipmentType: string
-        expiresAt: string
-        usageCount: number
-      }> = sidecarData.tokens ?? []
+    // Poll up to 30 s for the async Vercel→sidecar push to complete
+    type SidecarToken = { status: string; dataClientId: string; equipmentType: string; expiresAt: string; usageCount: number; token?: string }
+    let sidecarData: { tokens: SidecarToken[] } = { tokens: [] }
+    let sidecarOk = false
 
+    for (let attempt = 0; attempt < 6; attempt++) {
+      await page.waitForTimeout(5_000)
+      const res = await page.request
+        .get(`${ctx.sidecarUrl}/api/tokens`, {
+          headers: { Authorization: "Bearer admin" },
+        })
+        .catch(() => null)
+      if (res?.ok()) {
+        sidecarOk = true
+        sidecarData = await res.json()
+        const active = (sidecarData.tokens ?? []).filter((t) => t.status === "active")
+        console.log(`[E2E] Poll ${attempt + 1}/6 — sidecar tokens: ${sidecarData.tokens?.length ?? 0} total, ${active.length} active`)
+        if (active.length > 0) break
+      } else {
+        console.warn(`[E2E] Poll ${attempt + 1}/6 — sidecar not reachable (status: ${res?.status() ?? "N/A"})`)
+      }
+    }
+
+    if (sidecarOk) {
+      const allTokens = sidecarData.tokens ?? []
       const activeTokens = allTokens.filter((t) => t.status === "active")
       expect(activeTokens.length).toBeGreaterThan(0)
       console.log(`[E2E] Sidecar active tokens: ${activeTokens.length}`)
@@ -220,8 +246,8 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
       const activeToken = activeTokens[0]
       if (activeToken) {
         // Need the raw token value — list returns full objects
-        const tokenWithValue = sidecarData.tokens.find(
-          (t: { status: string; token?: string }) => t.status === "active" && t.token,
+        const tokenWithValue = allTokens.find(
+          (t) => t.status === "active" && t.token,
         ) as { token: string; equipmentType: string } | undefined
 
         if (tokenWithValue?.token) {

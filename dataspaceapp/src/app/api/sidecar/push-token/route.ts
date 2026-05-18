@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server"
-import { getAuth } from "firebase-admin/auth"
-import { getAdminApp } from "@/lib/firebase-admin"
 
 export const runtime = "nodejs"
 
 const SIDECAR_ADMIN_SECRET = process.env.SIDECAR_ADMIN_SECRET ?? "admin"
+const FIREBASE_API_KEY = process.env.NEXT_PUBLIC_FIREBASE_API_KEY ?? ""
 
 type PushTokenBody = {
   idToken?: string
@@ -25,12 +24,25 @@ type PushTokenBody = {
   permissions?: string[]
 }
 
-export async function POST(request: Request) {
-  const app = getAdminApp()
-  if (!app) {
-    return NextResponse.json({ error: "Firebase Admin not configured" }, { status: 503 })
+async function verifyFirebaseIdToken(idToken: string): Promise<boolean> {
+  if (!FIREBASE_API_KEY) return false
+  try {
+    const res = await fetch(
+      `https://identitytoolkit.googleapis.com/v1/accounts:lookup?key=${FIREBASE_API_KEY}`,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken }),
+        signal: AbortSignal.timeout(5000),
+      },
+    )
+    return res.ok
+  } catch {
+    return false
   }
+}
 
+export async function POST(request: Request) {
   let body: PushTokenBody
   try {
     body = (await request.json()) as PushTokenBody
@@ -44,9 +56,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "idToken is required" }, { status: 400 })
   }
 
-  try {
-    await getAuth(app).verifyIdToken(idToken)
-  } catch {
+  const valid = await verifyFirebaseIdToken(idToken)
+  if (!valid) {
     return NextResponse.json({ error: "Invalid or expired id token" }, { status: 401 })
   }
 

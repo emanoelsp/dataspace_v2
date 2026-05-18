@@ -38,7 +38,7 @@ export function buildCncPressContext(overrides?: Partial<CncPressContext>): CncP
     password: `E2eP2P!${runId.slice(-6)}`,
     federationName: `Manufacturing Cell ${runId}`,
     assetName: `CNC Machining Center ${runId}`,
-    sidecarUrl: "http://localhost:3100",
+    sidecarUrl: process.env.SIDECAR_PUBLIC_URL ?? "http://localhost:3100",
     cncApiUrl: "http://192.168.0.70:3001",
     pressApiUrl: "http://192.168.0.168:3002",
     tokenTtlMinutes: 5,
