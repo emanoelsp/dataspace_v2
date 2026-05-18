@@ -330,7 +330,7 @@ function OwnerView({ profile, user }: { profile: DataspaceUserProfile; user: Use
           )}
           {lastRefresh && (
             <span className="text-xs text-gray-400">
-              Updated {lastRefresh.toLocaleTimeString("pt-BR")}
+              Updated {lastRefresh.toLocaleTimeString()}
             </span>
           )}
           <button
@@ -380,7 +380,7 @@ function OwnerView({ profile, user }: { profile: DataspaceUserProfile; user: Use
           [
             { key: "tokens", label: `Token Registry (${tokens.length})` },
             { key: "log", label: `Access Log (${logEntries.length})` },
-            { key: "metrics", label: "Métricas" },
+            { key: "metrics", label: "Metrics" },
           ] as const
         ).map(({ key, label }) => (
           <button
@@ -548,105 +548,105 @@ function OwnerView({ profile, user }: { profile: DataspaceUserProfile; user: Use
         </div>
       )}
 
-      {/* Métricas */}
+      {/* Metrics */}
       {tab === "metrics" && (
         <div className="space-y-6">
-          {/* Row 1: ciclo de dados (Firestore) */}
+          {/* Row 1: data cycle (Firestore) */}
           <div>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Ciclo de Dados — Negociação de Contratos</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Data Cycle — Contract Negotiation</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Taxa de Conversão</p>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Conversion Rate</p>
                 <p className="text-3xl font-bold text-blue-700">
                   {conversionRate !== null ? `${conversionRate}%` : "—"}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  {finalizedAgreements} finalizados / {totalAgreements} negociações
+                  {finalizedAgreements} finalized / {totalAgreements} negotiations
                 </p>
                 <p className="text-xs text-gray-400 mt-3 leading-relaxed">
-                  Proporção de acordos solicitados que chegaram ao estado <em>finalized</em>.
+                  Proportion of requested agreements that reached the <em>finalized</em> state.
                 </p>
               </div>
 
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Tempo Médio de Negociação</p>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Avg. Negotiation Time</p>
                 <p className="text-3xl font-bold text-purple-700">
                   {avgNegotiationH !== null ? `${avgNegotiationH} h` : "—"}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  {negotiationTimesH.length} acordos finalizados com timestamp
+                  {negotiationTimesH.length} finalized agreements with timestamp
                 </p>
                 <p className="text-xs text-gray-400 mt-3 leading-relaxed">
-                  Intervalo médio entre assinatura do consumidor e aprovação do provedor.
+                  Average interval between consumer signature and provider approval.
                 </p>
               </div>
 
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Acessos por Contrato Ativo</p>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Accesses per Active Contract</p>
                 <p className="text-3xl font-bold text-teal-700">
                   {avgUsagePerContract !== null ? avgUsagePerContract : "—"}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  média de usos · {activeTokens.length} contratos ativos
+                  avg. uses · {activeTokens.length} active contracts
                 </p>
                 <p className="text-xs text-gray-400 mt-3 leading-relaxed">
-                  Média de requisições P2P realizadas por contrato vigente (proxy para volume de dados).
+                  Average P2P requests made per active contract (proxy for data volume).
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Row 2: conector DSP (sidecar) */}
+          {/* Row 2: DSP connector (sidecar) */}
           <div>
-            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">Conector DSP — Sidecar Proxy</p>
+            <p className="text-xs font-semibold text-gray-400 uppercase tracking-wider mb-3">DSP Connector — Sidecar Proxy</p>
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Taxa de Sucesso DSP</p>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">DSP Success Rate</p>
                 <p className={`text-3xl font-bold ${dspSuccessRate !== null && dspSuccessRate >= 90 ? "text-green-700" : dspSuccessRate !== null ? "text-orange-600" : "text-gray-400"}`}>
                   {dspSuccessRate !== null ? `${dspSuccessRate}%` : "—"}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  {authorizedCount} ok · {blockedCount} bloqueados
+                  {authorizedCount} ok · {blockedCount} blocked
                 </p>
                 <p className="text-xs text-gray-400 mt-3 leading-relaxed">
-                  Proporção de requisições P2P autorizadas pelo sidecar proxy.
+                  Proportion of P2P requests authorized by the sidecar proxy.
                 </p>
               </div>
 
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Latência Média do Conector</p>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Avg. Connector Latency</p>
                 <p className={`text-3xl font-bold ${avgLatencyMs !== null && avgLatencyMs < 300 ? "text-green-700" : avgLatencyMs !== null ? "text-orange-600" : "text-gray-400"}`}>
                   {avgLatencyMs !== null ? `${avgLatencyMs} ms` : "—"}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  {validLatencies.length} amostras do log de acesso
+                  {validLatencies.length} samples from the access log
                 </p>
                 <p className="text-xs text-gray-400 mt-3 leading-relaxed">
-                  Tempo médio de resposta ao encaminhar requisições aos equipamentos.
+                  Average response time when forwarding requests to equipment endpoints.
                 </p>
               </div>
 
               <div className="bg-white rounded-xl border border-gray-100 shadow-sm p-5">
-                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Tokens Expirados s/ Renovação</p>
+                <p className="text-xs font-semibold text-gray-400 uppercase tracking-wide mb-1">Expired Tokens w/o Renewal</p>
                 <p className={`text-3xl font-bold ${expiredNotRenewed === 0 ? "text-green-700" : expiredNotRenewed <= 2 ? "text-orange-600" : "text-red-600"}`}>
                   {tokens.length > 0 ? expiredNotRenewed : "—"}
                 </p>
                 <p className="text-xs text-gray-400 mt-1">
-                  de {revokedTokens.length} expirados/revogados total
+                  of {revokedTokens.length} expired/revoked total
                 </p>
                 <p className="text-xs text-gray-400 mt-3 leading-relaxed">
-                  Clientes que perderam acesso sem obter novo token — sinal de abandono silencioso.
+                  Clients that lost access without obtaining a new token — a signal of silent churn.
                 </p>
               </div>
             </div>
           </div>
 
-          {/* Referências */}
+          {/* References */}
           <div className="bg-gray-50 rounded-xl border border-gray-200 p-5 text-xs text-gray-500 space-y-4">
-            <p className="font-semibold text-gray-600 text-sm">Fundamentação nas referências</p>
+            <p className="font-semibold text-gray-600 text-sm">Reference basis</p>
 
             <div className="space-y-1">
-              <p className="font-medium text-gray-700">Taxa de Conversão · Tempo Médio de Negociação</p>
+              <p className="font-medium text-gray-700">Conversion Rate · Avg. Negotiation Time</p>
               <p>Nagel, R.; Walda, M.-K.; Meyer, J. P. <span className="italic">IntraDataspace: An architecture of a company-internal Dataspace</span>. eSAAM 2024 — 4th Eclipse Security, AI, Architecture and Modelling Conf. on Data Space. Fraunhofer ISST / IAV GmbH, 2024.</p>
               <p className="italic text-gray-400 border-l-2 border-gray-300 pl-3 mt-1">
                 &ldquo;If a contract agreement is reached, which is the final state of the negotiation, the data represented by the asset can be transferred. Additional policy templates can be introduced at any time to accommodate new requirements.&rdquo;
@@ -654,7 +654,7 @@ function OwnerView({ profile, user }: { profile: DataspaceUserProfile; user: Use
             </div>
 
             <div className="space-y-1">
-              <p className="font-medium text-gray-700">Acessos por Contrato · Taxa de Sucesso DSP · Latência Média</p>
+              <p className="font-medium text-gray-700">Accesses per Contract · DSP Success Rate · Avg. Latency</p>
               <p>Siska, V.; Karagiannis, V.; Drobics, M. <span className="italic">Building a Dataspace: Technical Overview</span>. Gaia-X Hub Austria, 2023.</p>
               <p className="italic text-gray-400 border-l-2 border-gray-300 pl-3 mt-1">
                 &ldquo;Data exchange services are responsible for the actual transactions including contracting, access and usage control, and logging transactions, auditing.&rdquo; (§2.2 — Data Exchange)
@@ -662,7 +662,7 @@ function OwnerView({ profile, user }: { profile: DataspaceUserProfile; user: Use
             </div>
 
             <div className="space-y-1">
-              <p className="font-medium text-gray-700">Tokens Expirados s/ Renovação</p>
+              <p className="font-medium text-gray-700">Expired Tokens w/o Renewal</p>
               <p>IDSA. <span className="italic">IDS Reference Architecture Model 4.0</span>. International Data Spaces Association, 2024.</p>
               <p className="italic text-gray-400 border-l-2 border-gray-300 pl-3 mt-1">
                 &ldquo;The control plane is responsible for all processes leading up to and following a transaction: identity and access management; handling offers; creating, negotiating, and settling contracts; logging.&rdquo; (§3.5)

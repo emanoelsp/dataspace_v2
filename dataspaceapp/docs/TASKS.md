@@ -40,17 +40,20 @@
 
 ## Em andamento
 
-- [ ] Endurecer `connectorCredentials` — rotação formal, `clientSecretHash`, auditoria de revogação
-- [ ] Implementar `identityTokens` dedicados com trilha de emissão, expiração e revogação
-- [ ] Extrair operações sensíveis (emissão de token, decisões de acesso) para Route Handlers server-side
+- [x] Endurecer `connectorCredentials` — rotação formal, `clientSecretHash`, auditoria de revogação
+- [x] Implementar `identityTokens` dedicados com trilha de emissão, expiração e revogação
+- [x] `identityTrustLogs` — auditoria de autenticação mútua entre conectores
+- [x] Extrair operações sensíveis (credenciais, identity tokens) para Route Handlers server-side
+- [x] Regras `firestore.rules` para `connectorCredentials`, `identityTokens`, `identityTrustLogs`
+- [x] UI de Application Credentials (issue/rotate/revoke) em `/profile/connector`
+- [x] UI de Identity Tokens (issue 60min) em `/profile/connector`
 
 ## Backlog — Prioridade alta
 
 - [ ] Sidecar HTTP simplificado como Policy Enforcement Point (valida token no edge, libera chamada ao CPS)
 - [ ] Suporte a MQTT no sidecar para CPS industriais
-- [ ] `identityTrustLogs` — auditoria de autenticação mútua entre conectores
-- [ ] Endurecer `firestore.rules` para todas as coleções novas (federationMemberships, contractAgreements, credentialGrants)
-- [ ] Route Handler para emissão de `accessToken` (mover do client para servidor)
+- [ ] Endurecer `firestore.rules` para coleções de contrato (federationMemberships, contractAgreements, credentialGrants)
+- [ ] Route Handler para emissão de `accessToken` (mover lógica do client para servidor)
 - [ ] Route Handler para decisão de `contractAgreement` (approve/reject)
 
 ## Backlog — Prioridade média

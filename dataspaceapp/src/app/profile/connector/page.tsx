@@ -13,7 +13,7 @@ import {
   where,
   writeBatch,
 } from "firebase/firestore"
-import { ChevronLeft, Pencil, Plug, Plus, Trash2, Workflow } from "lucide-react"
+import { ChevronLeft, KeyRound, Pencil, Plug, Plus, RefreshCw, ShieldCheck, Trash2, Workflow } from "lucide-react"
 import { db } from "@/lib/firebase"
 import {
   buildConnectorProfileFields,
@@ -24,6 +24,20 @@ import {
 } from "@/lib/connector-profiles"
 import { buildOwnershipFields } from "@/lib/dataspace"
 import { useUserProfile } from "@/lib/use-user-profile"
+
+type ConnectorCredential = {
+  id: string
+  connectorProfileId?: string
+  participantId?: string
+  clientId?: string
+  status?: string
+  issuedAt?: { toDate?: () => Date }
+  rotatedAt?: { toDate?: () => Date }
+  revokedAt?: { toDate?: () => Date }
+  expiresAt?: { toDate?: () => Date } | Date
+  createdAt?: { toDate?: () => Date }
+  updatedAt?: { toDate?: () => Date }
+}
 
 type ConnectorConnection = {
   id: string
@@ -96,6 +110,11 @@ export default function ConnectorProfilePage() {
   const [connectionsMessage, setConnectionsMessage] = useState("")
   const [connectionsError, setConnectionsError] = useState("")
   const [connections, setConnections] = useState<ConnectorConnection[]>([])
+  const [credentials, setCredentials] = useState<ConnectorCredential[]>([])
+  const [credentialsLoading, setCredentialsLoading] = useState(false)
+  const [credentialsMessage, setCredentialsMessage] = useState("")
+  const [credentialsError, setCredentialsError] = useState("")
+  const [issuedSecret, setIssuedSecret] = useState<{ clientId: string; clientSecret: string } | null>(null)
   const [version, setVersion] = useState(0)
   const [deletingId, setDeletingId] = useState<string | null>(null)
   const legacyMigrationAttemptedRef = useRef(false)
@@ -229,6 +248,94 @@ export default function ConnectorProfilePage() {
 
     void loadConnections()
   }, [isOwner, profile?.userType, user, version])
+
+  useEffect(() => {
+    const loadCredentials = async () => {
+      if (!user) {
+        setCredentials([])
+        return
+      }
+      try {
+        setCredentialsLoading(true)
+        setCredentialsError("")
+        const snapshot = await getDocs(query(collection(db, "connectorCredentials"), where("ownerId", "==", user.uid)))
+        const rows = sortByTimestamp(
+          snapshot.docs.map((d) => ({ id: d.id, ...d.data() }) as ConnectorCredential),
+        )
+        setCredentials(rows)
+      } catch {
+        setCredentialsError("Could not load connector credentials.")
+      } finally {
+        setCredentialsLoading(false)
+      }
+    }
+    void loadCredentials()
+  }, [user, version])
+
+  const issueCredential = async (connectorProfileId: string) => {
+    if (!user) return
+    try {
+      setCredentialsError("")
+      setCredentialsMessage("")
+      setIssuedSecret(null)
+      const idToken = await user.getIdToken()
+      const res = await fetch("/api/connector-credentials/issue", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken, connectorProfileId }),
+      })
+      const data = (await res.json()) as { ok?: boolean; clientId?: string; clientSecret?: string; error?: string }
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to issue credential")
+      setIssuedSecret({ clientId: data.clientId!, clientSecret: data.clientSecret! })
+      setCredentialsMessage("Credential issued. Copy the client secret — it will not be shown again.")
+      setVersion((v) => v + 1)
+    } catch (e) {
+      setCredentialsError(e instanceof Error ? e.message : "Failed to issue credential.")
+    }
+  }
+
+  const rotateCredential = async (credentialId: string) => {
+    if (!user) return
+    try {
+      setCredentialsError("")
+      setCredentialsMessage("")
+      setIssuedSecret(null)
+      const idToken = await user.getIdToken()
+      const res = await fetch("/api/connector-credentials/rotate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken, credentialId }),
+      })
+      const data = (await res.json()) as { ok?: boolean; clientId?: string; clientSecret?: string; error?: string }
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to rotate credential")
+      setIssuedSecret({ clientId: data.clientId!, clientSecret: data.clientSecret! })
+      setCredentialsMessage("Credential rotated. Copy the new client secret — it will not be shown again.")
+      setVersion((v) => v + 1)
+    } catch (e) {
+      setCredentialsError(e instanceof Error ? e.message : "Failed to rotate credential.")
+    }
+  }
+
+  const revokeCredential = async (credentialId: string) => {
+    if (!user) return
+    try {
+      setCredentialsError("")
+      setCredentialsMessage("")
+      setIssuedSecret(null)
+      const idToken = await user.getIdToken()
+      const res = await fetch("/api/connector-credentials/revoke", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken, credentialId }),
+      })
+      const data = (await res.json()) as { ok?: boolean; error?: string }
+      if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to revoke credential")
+      setCredentialsMessage("Credential revoked.")
+      setVersion((v) => v + 1)
+    } catch (e) {
+      setCredentialsError(e instanceof Error ? e.message : "Failed to revoke credential.")
+    }
+  }
 
   const defaultConnector = useMemo(
     () => connectors.find((connector) => connector.isDefault) ?? null,
@@ -608,6 +715,116 @@ export default function ConnectorProfilePage() {
               </ul>
             )}
           </div>
+          <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-2 mb-3">
+              <KeyRound className="h-5 w-5 text-indigo-600" />
+              <h2 className="text-lg font-semibold text-gray-900">Application credentials</h2>
+            </div>
+            <p className="text-sm text-gray-600 mb-4">
+              Issue a <code className="text-xs bg-gray-100 px-1 rounded">clientId</code> /
+              <code className="text-xs bg-gray-100 px-1 rounded ml-1">clientSecret</code> pair per connector for machine-to-machine
+              authentication. The secret is shown only once and stored as a hash — rotate it if compromised.
+            </p>
+
+            {credentialsMessage ? (
+              <div className="mb-3 rounded-md border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-800">
+                {credentialsMessage}
+              </div>
+            ) : null}
+
+            {credentialsError ? (
+              <div className="mb-3 rounded-md border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+                {credentialsError}
+              </div>
+            ) : null}
+
+            {issuedSecret ? (
+              <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm">
+                <p className="font-semibold text-amber-900 mb-2">Copy now — not shown again</p>
+                <div className="space-y-1 font-mono text-xs text-amber-900">
+                  <p><span className="font-semibold">Client ID:</span> {issuedSecret.clientId}</p>
+                  <p><span className="font-semibold">Client secret:</span> {issuedSecret.clientSecret}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setIssuedSecret(null)}
+                  className="mt-3 text-xs text-amber-700 underline"
+                >
+                  Dismiss
+                </button>
+              </div>
+            ) : null}
+
+            {credentialsLoading ? (
+              <p className="text-sm text-gray-500">Loading credentials...</p>
+            ) : (
+              <div className="space-y-4">
+                {defaultConnector ? (
+                  <button
+                    type="button"
+                    onClick={() => void issueCredential(defaultConnector.id)}
+                    className="inline-flex items-center gap-2 rounded-md bg-indigo-600 px-3 py-2 text-xs font-medium text-white hover:bg-indigo-700"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Issue credential for default connector
+                  </button>
+                ) : (
+                  <p className="text-xs text-gray-500">Set a default connector first to issue credentials.</p>
+                )}
+
+                {credentials.length > 0 ? (
+                  <ul className="space-y-3 mt-3">
+                    {credentials.map((cred) => {
+                      const expDate = cred.expiresAt instanceof Date
+                        ? cred.expiresAt
+                        : typeof cred.expiresAt === "object" && cred.expiresAt !== null && "toDate" in cred.expiresAt
+                          ? (cred.expiresAt as { toDate: () => Date }).toDate()
+                          : null
+                      return (
+                        <li key={cred.id} className="rounded-lg border border-gray-200 bg-gray-50 p-3">
+                          <div className="flex flex-wrap items-center justify-between gap-2">
+                            <div className="min-w-0">
+                              <p className="font-mono text-xs text-gray-900">{cred.clientId ?? "—"}</p>
+                              {expDate ? (
+                                <p className="mt-1 text-[11px] text-gray-500">
+                                  Expires {expDate.toLocaleDateString()}
+                                </p>
+                              ) : null}
+                            </div>
+                            <span className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold uppercase tracking-wide ${statusBadgeClass(cred.status ?? "")}`}>
+                              {cred.status ?? "—"}
+                            </span>
+                          </div>
+                          {cred.status === "active" ? (
+                            <div className="mt-2 flex flex-wrap gap-2">
+                              <button
+                                type="button"
+                                onClick={() => void rotateCredential(cred.id)}
+                                className="inline-flex items-center gap-1 rounded-md border border-gray-300 bg-white px-2.5 py-1.5 text-xs font-medium text-gray-700 hover:bg-gray-100"
+                              >
+                                <RefreshCw className="h-3 w-3" />
+                                Rotate
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => void revokeCredential(cred.id)}
+                                className="inline-flex items-center gap-1 rounded-md border border-red-200 bg-red-50 px-2.5 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100"
+                              >
+                                <Trash2 className="h-3 w-3" />
+                                Revoke
+                              </button>
+                            </div>
+                          ) : null}
+                        </li>
+                      )
+                    })}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-gray-500 mt-2">No credentials issued yet.</p>
+                )}
+              </div>
+            )}
+          </div>
         </section>
 
         <section className="space-y-6">
@@ -727,6 +944,49 @@ export default function ConnectorProfilePage() {
               </div>
             )}
           </div>
+
+          {defaultConnector ? (
+            <div className="rounded-xl border border-gray-200 bg-white p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <ShieldCheck className="h-5 w-5 text-emerald-600" />
+                <h2 className="text-lg font-semibold text-gray-900">Identity tokens</h2>
+              </div>
+              <p className="text-sm text-gray-600 mb-4">
+                Issue short-lived identity tokens for mutual authentication between connectors.
+                Each token is tied to the default connector participant ID and recorded in the trust log.
+              </p>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!user || !defaultConnector) return
+                  try {
+                    setCredentialsError("")
+                    setCredentialsMessage("")
+                    setIssuedSecret(null)
+                    const idToken = await user.getIdToken()
+                    const res = await fetch("/api/identity-tokens/issue", {
+                      method: "POST",
+                      headers: { "Content-Type": "application/json" },
+                      body: JSON.stringify({ idToken, connectorProfileId: defaultConnector.id, ttlMinutes: 60 }),
+                    })
+                    const data = (await res.json()) as { ok?: boolean; token?: string; expiresAt?: string; error?: string }
+                    if (!res.ok || !data.ok) throw new Error(data.error ?? "Failed to issue identity token")
+                    setCredentialsMessage(`Identity token issued. Expires: ${data.expiresAt ? new Date(data.expiresAt).toLocaleString() : "in 60 min"}`)
+                    setVersion((v) => v + 1)
+                  } catch (e) {
+                    setCredentialsError(e instanceof Error ? e.message : "Failed to issue identity token.")
+                  }
+                }}
+                className="inline-flex items-center gap-2 rounded-md border border-emerald-300 bg-emerald-50 px-3 py-2 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                Issue identity token (60 min)
+              </button>
+              <p className="mt-3 text-[11px] text-gray-400">
+                Active tokens are logged in the identity trust audit trail.
+              </p>
+            </div>
+          ) : null}
         </section>
       </div>
     </div>

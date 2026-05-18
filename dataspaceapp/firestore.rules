@@ -33,6 +33,25 @@ service cloud.firestore {
       allow read, update, delete: if ownsResource(resource.data);
     }
 
+    match /connectorCredentials/{docId} {
+      // Only the owner can read and update; secret is stored as hash — plaintext never persisted
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read, update: if ownsResource(resource.data);
+      allow delete: if false;
+    }
+
+    match /identityTokens/{docId} {
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read, update: if ownsResource(resource.data);
+      allow delete: if false;
+    }
+
+    match /identityTrustLogs/{docId} {
+      allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
+      allow read: if ownsResource(resource.data);
+      allow update, delete: if false;
+    }
+
     match /federations/{docId} {
       allow read: if true;
       allow create: if signedIn() && request.resource.data.ownerId == request.auth.uid;
