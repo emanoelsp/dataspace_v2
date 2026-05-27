@@ -112,6 +112,14 @@ const MENUS: Record<string, MenuType> = {
         ],
       },
       {
+        label: "My Assets",
+        description: "View your data assets and stream real-time API data from any endpoint",
+        basePath: "/access/my-assets",
+        options: [
+          { label: "Open My Assets", href: "/access/my-assets" },
+        ],
+      },
+      {
         label: "Access Monitor",
         description: "Live sidecar dashboard — active tokens, access log, and blocked requests",
         basePath: "/dashboard/sidecar",
@@ -152,6 +160,14 @@ const MENUS: Record<string, MenuType> = {
         options: [
           { label: "Access workspace", href: "/access" },
           { label: "My requests", href: "/access/my-requests" },
+        ],
+      },
+      {
+        label: "My Assets",
+        description: "Access approved assets and stream real-time API data from their endpoints",
+        basePath: "/access/my-assets",
+        options: [
+          { label: "Open My Assets", href: "/access/my-assets" },
         ],
       },
       {
@@ -338,6 +354,9 @@ export default function DataspaceMenu() {
                       <Link href="/assets/create" className="text-sm text-blue-600 hover:text-blue-700 font-medium" onClick={handleLinkClick}>
                         + New Asset
                       </Link>
+                      <Link href="/access/my-assets" className="text-sm text-blue-600 hover:text-blue-700 font-medium" onClick={handleLinkClick}>
+                        📡 My Assets Live
+                      </Link>
                     </>
                   )}
                   {roleMenuKey === "data-client" && (
@@ -350,6 +369,9 @@ export default function DataspaceMenu() {
                       </Link>
                       <Link href="/access/my-requests" className="text-sm text-blue-600 hover:text-blue-700 font-medium" onClick={handleLinkClick}>
                         🔍 My requests
+                      </Link>
+                      <Link href="/access/my-assets" className="text-sm text-blue-600 hover:text-blue-700 font-medium" onClick={handleLinkClick}>
+                        📡 My Assets Live
                       </Link>
                     </>
                   )}
