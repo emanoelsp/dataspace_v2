@@ -24,6 +24,8 @@ type SidecarEvent = {
   success?: boolean
   error?: string
   timestamp?: string
+  contractRef?: string
+  governance?: Record<string, unknown> | null
 }
 
 function validateSidecarSecret(authHeader: string | null): boolean {
@@ -67,6 +69,8 @@ export async function POST(request: Request) {
       responseTimeMs: event.responseTimeMs ?? 0,
       success: event.success ?? false,
       error: event.error ?? null,
+      contractRef: event.contractRef ?? "",
+      governance: event.governance ?? null,
       proxyTimestamp: event.timestamp ?? new Date().toISOString(),
       createdAt: FieldValue.serverTimestamp(),
     })

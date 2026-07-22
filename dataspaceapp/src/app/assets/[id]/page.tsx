@@ -9,6 +9,7 @@ import { buildOwnershipFields, buildRequesterFields } from "@/lib/dataspace"
 import { isPublishedInCatalog } from "@/lib/catalog-visibility"
 import { useAuthUser } from "@/lib/use-auth-user"
 import { useUserProfile } from "@/lib/use-user-profile"
+import AASViewer from "@/components/aas-viewer"
 
 
 interface Asset {
@@ -30,6 +31,7 @@ interface Asset {
   connectorScopeLabel?: string
   sidecarProtocol?: string
   sidecarEndpoint?: string
+  equipmentSlug?: string
   semanticId?: string
   aasId?: string
   irdi?: string
@@ -107,11 +109,11 @@ type GovernancePolicy = {
   audit?: string
   usagePeriods?: string
   revocation?: string
+  revocationMode?: string
   purposeBinding?: boolean
   requiresManualApproval?: boolean
   agreementTtlHours?: number
   accessTokenTtlMinutes?: number
-  revocationMode?: string
   createdAt?: { toDate?: () => Date }
 }
 
@@ -299,6 +301,10 @@ export default function AssetDetailsPage() {
   const [assetCredentials, setAssetCredentials] = useState<CredentialGrant[]>([])
   const [currentAccessToken, setCurrentAccessToken] = useState<AccessToken | null>(null)
   const [governancePolicy, setGovernancePolicy] = useState<GovernancePolicy | null>(null)
+  const [ownerView, setOwnerView] = useState<{ token: string; sidecarEndpoint: string; equipmentType: string } | null>(null)
+  const [ownerViewLoading, setOwnerViewLoading] = useState(false)
+  const [ownerViewError, setOwnerViewError] = useState<string | null>(null)
+  const [showClientViewer, setShowClientViewer] = useState(false)
   const [accessVersion, setAccessVersion] = useState(0)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
   const [cpsHeader, setCpsHeader] = useState<Record<string, unknown>>({
@@ -358,7 +364,12 @@ export default function AssetDetailsPage() {
           }
           setAsset(assetData)
           setEditForm(assetData)
-          setBrokerUrl(`https://broker.example.com/api/assets/${docSnap.id}`)
+          const brokerSlug = assetData.equipmentSlug || normalizeEquipmentType(assetData.assetType, assetData.irdi) || ""
+          setBrokerUrl(
+            assetData.sidecarEndpoint && brokerSlug
+              ? `${assetData.sidecarEndpoint.replace(/\/+$/, "")}/api/proxy/${brokerSlug}/data`
+              : "",
+          )
         } else {
           setError("Asset not found")
         }
@@ -370,6 +381,26 @@ export default function AssetDetailsPage() {
     }
     fetchAsset()
   }, [params])
+
+  const requestOwnerView = async () => {
+    if (!user || !asset?.id) return
+    setOwnerViewLoading(true)
+    setOwnerViewError(null)
+    try {
+      const res = await fetch("/api/sidecar/owner-token", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ idToken: await user.getIdToken(), assetId: asset.id }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error ?? `HTTP ${res.status}`)
+      setOwnerView({ token: data.token, sidecarEndpoint: data.sidecarEndpoint, equipmentType: data.equipmentType })
+    } catch (err) {
+      setOwnerViewError(err instanceof Error ? err.message : "Falha ao emitir token de autovisão")
+    } finally {
+      setOwnerViewLoading(false)
+    }
+  }
 
   const canManageAsset = Boolean(
     user &&
@@ -1036,7 +1067,7 @@ export default function AssetDetailsPage() {
       })
       // Push token to sidecar proxy (fire-and-forget)
       if (asset.sidecarEndpoint) {
-        const equipmentType = normalizeEquipmentType(asset.assetType, asset.irdi)
+        const equipmentType = asset.equipmentSlug || normalizeEquipmentType(asset.assetType, asset.irdi)
         if (equipmentType) {
           user.getIdToken().then(idToken => {
             fetch("/api/sidecar/push-token", {
@@ -1059,6 +1090,16 @@ export default function AssetDetailsPage() {
                 governanceAcceptedAt: new Date().toISOString(),
                 contractRef: currentAgreement?.id ?? "",
                 permissions: ["data", "aas"],
+                governance: governancePolicy
+                  ? {
+                      policyId: governancePolicy.id,
+                      accessTokenTtlMinutes,
+                      purposeBinding: Boolean(governancePolicy.purposeBinding),
+                      requiresManualApproval: Boolean(governancePolicy.requiresManualApproval),
+                      revocationMode: governancePolicy.revocationMode ?? "owner-manual",
+                      conditions: governancePolicy.policies ?? "",
+                    }
+                  : undefined,
               }),
             }).catch(() => { /* sidecar push failed — non-critical */ })
           }).catch(() => { /* token fetch failed */ })
@@ -1691,9 +1732,67 @@ export default function AssetDetailsPage() {
         </div>
       )}
 
+      {/* Visão AAS via Sidecar — fluxo intra (browser → PEP → CPS) */}
+      {canManageAsset && asset.sidecarEndpoint ? (
+        ownerView ? (
+          <AASViewer
+            sidecarEndpoint={ownerView.sidecarEndpoint}
+            equipment={ownerView.equipmentType}
+            token={ownerView.token}
+            mode="owner"
+          />
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm border p-6">
+            <h2 className="text-xl font-semibold mb-2">Como me exponho</h2>
+            <p className="text-sm text-gray-600 mb-3">
+              Visualize o seu dado bruto formatado em AAS (ECLASS/IRDI), exatamente como os
+              consumidores o recebem — pelo mesmo caminho auditado do Sidecar PEP.
+            </p>
+            <button
+              onClick={requestOwnerView}
+              disabled={ownerViewLoading}
+              className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold px-4 py-2 rounded-md disabled:opacity-50"
+            >
+              {ownerViewLoading ? "Emitindo token de autovisão..." : "Visualizar AAS via Sidecar"}
+            </button>
+            {ownerViewError ? <p className="mt-2 text-sm text-red-600">{ownerViewError}</p> : null}
+          </div>
+        )
+      ) : null}
+
+      {!canManageAsset && currentAccessToken?.token && currentAccessToken.status === "active" && asset.sidecarEndpoint ? (
+        showClientViewer ? (
+          <AASViewer
+            sidecarEndpoint={asset.sidecarEndpoint}
+            equipment={asset.equipmentSlug || normalizeEquipmentType(asset.assetType, asset.irdi) || ""}
+            token={currentAccessToken.token}
+            mode="client"
+          />
+        ) : (
+          <div className="bg-white rounded-lg shadow-sm border p-6">
+            <h2 className="text-xl font-semibold mb-2">Consumir via Sidecar (intra)</h2>
+            <p className="text-sm text-gray-600 mb-3">
+              Você possui um token ativo para este ativo. O consumo ocorre dentro do perímetro da
+              fábrica: navegador → Sidecar PEP → CPS, sem passar pela nuvem.
+            </p>
+            <button
+              onClick={() => setShowClientViewer(true)}
+              className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-4 py-2 rounded-md"
+            >
+              Visualizar AAS + dados via Sidecar
+            </button>
+          </div>
+        )
+      ) : null}
+
       {/* Real-Time Data */}
       <div className="bg-white rounded-lg shadow-sm border p-6">
-        <h2 className="text-xl font-semibold mb-4">Real-Time Readings</h2>
+        <h2 className="text-xl font-semibold mb-4">
+          Real-Time Readings
+          <span className="ml-2 align-middle text-xs font-normal bg-amber-100 text-amber-800 px-2 py-0.5 rounded">
+            exploratório via nuvem — o consumo operacional é P2P via Sidecar
+          </span>
+        </h2>
         {dynamicRows.length === 0 && (
           <p className="text-gray-500 italic">No dynamic readings yet. Click Start Query.</p>
         )}

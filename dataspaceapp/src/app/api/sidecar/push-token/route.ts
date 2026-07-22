@@ -22,6 +22,7 @@ type PushTokenBody = {
   governanceAcceptedAt?: string
   contractRef?: string
   permissions?: string[]
+  governance?: Record<string, unknown>
 }
 
 async function verifyFirebaseIdToken(idToken: string): Promise<boolean> {

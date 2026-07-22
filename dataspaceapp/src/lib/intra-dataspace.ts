@@ -120,11 +120,14 @@ export type FederationAccessModel = {
 export function mapLegacyFederationType(type?: string | null): FederationAccessModel {
   switch (type) {
     case "Open":
+      // Aberta: descobre no catálogo, assina o contrato e consome.
       return { catalogVisibility: "public", admissionMode: "self-service" }
     case "Consortium":
-      return { catalogVisibility: "members", admissionMode: "approval" }
+      // Consórcio: somente convidados entram; catálogo restrito aos membros.
+      return { catalogVisibility: "members", admissionMode: "invite-only" }
     case "Private":
-      return { catalogVisibility: "hidden", admissionMode: "invite-only" }
+      // Privada: descobrível para permitir a solicitação, entrada só com aprovação.
+      return { catalogVisibility: "public", admissionMode: "approval" }
     default:
       return { catalogVisibility: "members", admissionMode: "approval" }
   }

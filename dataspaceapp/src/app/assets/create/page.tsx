@@ -7,7 +7,7 @@ import { collection, addDoc, getDocs, serverTimestamp } from "firebase/firestore
 import { db } from "@/lib/firebase"
 import { CheckCircle, Layers, Box, Code, FileText, ChevronLeft, X } from "lucide-react"
 import { buildOwnershipFields, sanitizeMultilineText, sanitizeOptionalText, sanitizeText, sanitizeUrl } from "@/lib/dataspace"
-import { ASSET_KINDS, EXCHANGE_MODES } from "@/lib/intra-dataspace"
+import { EXCHANGE_MODES } from "@/lib/intra-dataspace"
 import { useAuthUser } from "@/lib/use-auth-user"
 
 const steps = [
@@ -123,6 +123,16 @@ interface Federation {
   sidecarEndpoint?: string
 }
 
+function slugifyEquipment(value: string): string {
+  return value
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[̀-ͯ]/g, "")
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 32)
+}
+
 function CreateAssetPageInner() {
   const { user, loading: authLoading } = useAuthUser()
   const searchParams = useSearchParams()
@@ -138,17 +148,18 @@ function CreateAssetPageInner() {
   const [name, setName] = useState("")
   const [description, setDescription] = useState("")
   const [assetType, setAssetType] = useState("")
-  const [assetKind, setAssetKind] = useState("")
-  const [purpose, setPurpose] = useState("")
-  const [semanticId, setSemanticId] = useState("")
+  const [assetKind] = useState("data")
+  const [purpose] = useState("")
+  const [semanticId] = useState("")
   const [aasId, setAasId] = useState("")
   const [irdi, setIrdi] = useState("")
-  const [semanticModel, setSemanticModel] = useState("AAS / IEC 63278")
+  const [semanticModel] = useState("AAS / IEC 63278")
 
   const [apiEndpoint, setApiEndpoint] = useState("")
-  const [dataFormat, setDataFormat] = useState("")
-  const [exchangeMode, setExchangeMode] = useState("")
-  const [accessType, setAccessType] = useState("")
+  const [equipmentSlug, setEquipmentSlug] = useState("")
+  const [dataFormat, setDataFormat] = useState("JSON")
+  const [exchangeMode, setExchangeMode] = useState("stream")
+  const [accessType] = useState("Federation")
 
   const [step, setStep] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -208,11 +219,7 @@ function CreateAssetPageInner() {
   // Validações
   const isStep1Valid = () => federationId.trim() !== ""
   const isStep2Valid = () =>
-    name.trim() !== "" &&
-    description.trim() !== "" &&
-    assetType.trim() !== "" &&
-    assetKind.trim() !== "" &&
-    purpose.trim() !== ""
+    name.trim() !== "" && description.trim() !== "" && assetType.trim() !== ""
   const isStep3Valid = () =>
     apiEndpoint.trim() !== "" && dataFormat.trim() !== "" && exchangeMode.trim() !== ""
 
@@ -291,8 +298,49 @@ function CreateAssetPageInner() {
     setErrorMessage("")
     try {
       const selectedFederation = federations.find((federation) => federation.id === federationId)
+      const finalEquipmentSlug = equipmentSlug || slugifyEquipment(name)
+      const baseUrl =
+        normalizedApiEndpoint.replace(/\/api\/(data|aas)\/?$/i, "") ||
+        new URL(normalizedApiEndpoint).origin
+
+      // ── Colheita de capacidades do CPS (UDDI: descoberta por funcionalidade) ──
+      // Lê /api/data e o submodelo OperationalData do AAS para indexar no
+      // catálogo QUAIS variáveis o ativo expõe e seus identificadores semânticos.
+      let capabilities: string[] = []
+      let capabilitySemantics: string[] = []
+      let harvestedAasId = ""
+      let harvestedIrdi = ""
+      try {
+        const authHeaders = { headers: { Authorization: "Bearer demo" } }
+        const [dataRes, aasRes] = await Promise.all([
+          fetch(`${baseUrl}/api/data`, authHeaders),
+          fetch(`${baseUrl}/api/aas?submodel=OperationalData`, authHeaders),
+        ])
+        if (dataRes.ok) {
+          const d = await dataRes.json()
+          capabilities = Object.keys(d?.metrics ?? {}).slice(0, 64)
+          if (typeof d?.eclassIrdi === "string") harvestedIrdi = d.eclassIrdi
+        }
+        if (aasRes.ok) {
+          const env = await aasRes.json()
+          harvestedAasId = env?.assetAdministrationShells?.[0]?.id ?? ""
+          const collect = (els: Array<{ semanticId?: { keys?: Array<{ value?: string }> }; submodelElements?: unknown[] }>) => {
+            for (const el of els ?? []) {
+              const sem = el?.semanticId?.keys?.[0]?.value
+              if (sem) capabilitySemantics.push(sem)
+              if (Array.isArray(el?.submodelElements)) collect(el.submodelElements as typeof els)
+            }
+          }
+          for (const sm of env?.submodels ?? []) collect(sm?.submodelElements ?? [])
+          capabilitySemantics = Array.from(new Set(capabilitySemantics)).slice(0, 96)
+        }
+      } catch { /* CPS inacessível no registro — catálogo fica sem capacidades (pode ressalvar depois) */ }
+
       await addDoc(collection(db, "assets"), {
         name: sanitizeText(name),
+        equipmentSlug: finalEquipmentSlug,
+        capabilities,
+        capabilitySemantics,
         federationId,
         federationName: sanitizeText(federationName),
         connectorProfileId: sanitizeOptionalText(selectedFederation?.connectorProfileId ?? ""),
@@ -310,8 +358,8 @@ function CreateAssetPageInner() {
         assetKind: sanitizeText(assetKind),
         purpose: sanitizeText(purpose),
         semanticId: sanitizeOptionalText(semanticId),
-        aasId: sanitizeOptionalText(aasId),
-        irdi: sanitizeOptionalText(irdi),
+        aasId: sanitizeOptionalText(aasId) || harvestedAasId,
+        irdi: sanitizeOptionalText(irdi) || harvestedIrdi,
         semanticModel: sanitizeOptionalText(semanticModel),
         apiEndpoint: normalizedApiEndpoint,
         dataFormat: sanitizeText(dataFormat),
@@ -323,6 +371,29 @@ function CreateAssetPageInner() {
         updatedAt: serverTimestamp(),
         ...buildOwnershipFields(user),
       })
+
+      // Registra o CPS no Sidecar PEP: o sidecar passa a conhecer o equipamento
+      // (rota, nome, classe ECLASS e dono) sem depender de lista estática.
+      try {
+        await fetch("/api/sidecar/register-equipment", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            idToken: await user.getIdToken(),
+            sidecarUrl: sanitizeOptionalText(selectedFederation?.sidecarEndpoint ?? "") || undefined,
+            id: finalEquipmentSlug,
+            name: sanitizeText(name),
+            baseUrl,
+            eclassIrdi: sanitizeOptionalText(irdi) || undefined,
+            connectorId: sanitizeOptionalText(selectedFederation?.connectorProfileId ?? "") || undefined,
+            dataOwnerId: user.uid,
+            dataOwnerName: user.displayName ?? user.email ?? "",
+          }),
+        })
+      } catch {
+        // registro no sidecar é best-effort: o ativo permanece válido no catálogo
+      }
+
       setSubmitSuccess(true)
       setShowToast(true)
     } catch {
@@ -434,44 +505,7 @@ function CreateAssetPageInner() {
                   <option value="Other">Other</option>
                 </select>
               </div>
-              <div>
-                <label htmlFor="asset-kind" className="block text-sm font-medium text-gray-700 mb-1">Asset Kind *</label>
-                <select
-                  id="asset-kind"
-                  value={assetKind}
-                  onChange={(e) => setAssetKind(e.target.value)}
-                  required
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                >
-                  <option value="">-- Select Asset Kind --</option>
-                  {ASSET_KINDS.map((value) => (
-                    <option key={value} value={value}>
-                      {value === "data" ? "Data product" : value === "model" ? "ML model" : "Service"}
-                    </option>
-                  ))}
-                </select>
-              </div>
-              <div>
-                <label htmlFor="asset-purpose" className="block text-sm font-medium text-gray-700 mb-1">Purpose of Operation *</label>
-                <input
-                  id="asset-purpose"
-                  value={purpose}
-                  onChange={(e) => setPurpose(e.target.value)}
-                  placeholder="e.g. Monitoring, Predictive Maintenance, Optimization"
-                  required
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Semantic ID</label>
-                <input
-                  value={semanticId}
-                  onChange={(e) => setSemanticId(e.target.value)}
-                  placeholder="e.g. urn:data:robot:sensor_001"
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-                <p className="text-xs text-gray-500 mt-1">A unique identifier for the asset&apos;s meaning or type.</p>
-              </div>
+              
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">AAS ID</label>
                 <input
@@ -491,15 +525,7 @@ function CreateAssetPageInner() {
                   className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
                 />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Semantic model</label>
-                <input
-                  value={semanticModel}
-                  onChange={(e) => setSemanticModel(e.target.value)}
-                  placeholder="e.g. AAS / IEC 63278"
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
+              
             </div>
             <div className="mt-6 flex justify-between">
               <button
@@ -543,6 +569,19 @@ function CreateAssetPageInner() {
                 />
               </div>
               <div>
+                <label htmlFor="asset-equipment-slug" className="block text-sm font-medium text-gray-700 mb-1">Equipment ID (Sidecar route)</label>
+                <input
+                  id="asset-equipment-slug"
+                  value={equipmentSlug}
+                  onChange={(e) => setEquipmentSlug(slugifyEquipment(e.target.value))}
+                  placeholder={name ? `auto: ${slugifyEquipment(name)}` : "e.g. cnc, press, agv-01"}
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Identificador do CPS no Sidecar PEP (/api/proxy/&#123;id&#125;/data). Se vazio, é derivado do nome do ativo.
+                </p>
+              </div>
+              <div>
                 <label htmlFor="asset-data-format" className="block text-sm font-medium text-gray-700 mb-1">Data Format *</label>
                 <select
                   id="asset-data-format"
@@ -576,19 +615,7 @@ function CreateAssetPageInner() {
                   ))}
                 </select>
               </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Access Type</label>
-                <select
-                  value={accessType}
-                  onChange={(e) => setAccessType(e.target.value)}
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                >
-                  <option value="">-- Select Access Type --</option>
-                  <option value="Public">Public</option>
-                  <option value="Federation">Federation Only</option>
-                  <option value="Restricted">Restricted</option>
-                </select>
-              </div>
+              
               <div>
                 <button
                   type="button"

@@ -32,6 +32,8 @@
  */
 
 import { test, expect } from "@playwright/test"
+import fs from "fs"
+import path from "path"
 import {
   buildCncPressContext,
   createCncAsset,
@@ -50,9 +52,40 @@ import {
 
 test.describe.configure({ mode: "serial", timeout: 1_800_000 })
 
+/** Records wall-clock timestamps at each negotiation milestone. */
+function makeTimer() {
+  const t0 = Date.now()
+  const marks: Array<{ label: string; ts: number }> = [{ label: "start", ts: t0 }]
+  return {
+    mark(label: string) { marks.push({ label, ts: Date.now() }) },
+    save(extra: Record<string, unknown> = {}) {
+      const steps = marks.slice(1).map((m, i) => ({
+        label: m.label,
+        durationMs: m.ts - marks[i].ts,
+        elapsedMs: m.ts - t0,
+        completedAt: new Date(m.ts).toISOString(),
+      }))
+      const totalMs = marks[marks.length - 1].ts - t0
+      const out = {
+        startedAt: new Date(t0).toISOString(),
+        totalNegotiationMs: totalMs,
+        steps,
+        ...extra,
+      }
+      const dir = path.resolve(__dirname, "../results")
+      if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+      fs.writeFileSync(path.join(dir, "negotiation-timing.json"), JSON.stringify(out, null, 2))
+      console.log(`[E2E] Negotiation timing saved → results/negotiation-timing.json`)
+      console.log(`[E2E] Total negotiation: ${(totalMs / 1000).toFixed(1)} s`)
+      steps.forEach(s => console.log(`[E2E]   ${s.label}: ${s.durationMs} ms`))
+    },
+  }
+}
+
 test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
   test("press accesses cnc data via sidecar with 5-min token", async ({ page }) => {
     const ctx = buildCncPressContext()
+    const timer = makeTimer()
 
     // ── 1. CNC: signup + connector ─────────────────────────────────────────────
     console.log(`[E2E] Run ID: ${ctx.runId}`)
@@ -66,24 +99,30 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
       role: "datasource",
     })
     await setupCncConnector(page, ctx)
+    timer.mark("cnc_signup_connector")
 
     // ── 2. CNC: open federation ────────────────────────────────────────────────
     await createOpenFederation(page, expect, ctx)
     const federationId = await getFederationId(page, ctx.federationName)
     console.log(`[E2E] Federation ID: ${federationId}`)
+    timer.mark("cnc_federation_created")
 
     // ── 3. CNC: compliance ─────────────────────────────────────────────────────
     await fillComplianceWizard(page, expect, federationId)
+    timer.mark("cnc_compliance_done")
 
     // ── 4. CNC: asset (IRDI → CNC machining center) ────────────────────────────
     await createCncAsset(page, expect, ctx, federationId)
     console.log(`[E2E] Asset ID: ${ctx.assetId}`)
+    timer.mark("cnc_asset_created")
 
     // ── 5. CNC: governance (5-min TTL) ─────────────────────────────────────────
     await fillGovernanceWizard(page, expect, ctx, federationId)
+    timer.mark("cnc_governance_done")
 
     // ── 6. CNC: publish contract offer ─────────────────────────────────────────
     await publishContractOffer(page, expect, ctx)
+    timer.mark("cnc_offer_published")
 
     await logout(page)
 
@@ -95,6 +134,7 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
       role: "dataclient",
     })
     await setupPressConnector(page, ctx)
+    timer.mark("press_signup_connector")
 
     // ── 8. Press: request connector connection to CNC ──────────────────────────
     await page.goto(`/federations/${federationId}`)
@@ -102,6 +142,7 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
     await expect(
       page.getByText(/connection request submitted|Wait for the Data Owner/i),
     ).toBeVisible({ timeout: 60_000 })
+    timer.mark("press_connector_requested")
 
     await logout(page)
 
@@ -112,6 +153,7 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
     await expect(
       page.getByText(/Connector connection approved|approved/i),
     ).toBeVisible({ timeout: 60_000 })
+    timer.mark("connector_approved")
 
     await logout(page)
 
@@ -135,6 +177,7 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
     await expect(
       page.getByText(/can now move to asset agreements/i).first(),
     ).toBeVisible({ timeout: 60_000 })
+    timer.mark("press_joined_federation")
 
     // ── 11. Press: request contract agreement on CNC asset ────────────────────
     await navigateToAssetPage(page, ctx)
@@ -142,6 +185,7 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
     await expect(
       page.getByRole("button", { name: "Agreement requested" }),
     ).toBeVisible({ timeout: 60_000 })
+    timer.mark("press_agreement_requested")
 
     await logout(page)
 
@@ -152,6 +196,7 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
     await expect(
       page.getByText(/Status:\s*finalized/i).first(),
     ).toBeVisible({ timeout: 90_000 })
+    timer.mark("contract_finalized")
 
     await logout(page)
 
@@ -193,6 +238,7 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
     await expect(
       page.locator("b", { hasText: "Broker API:" }),
     ).toBeVisible({ timeout: 90_000 })
+    timer.mark("token_pushed_to_sidecar")
 
     await pushTokenPromise
 
@@ -266,6 +312,7 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
             console.log(
               `[E2E] CNC /data OK — type: ${cncData.equipmentType as string}, state: ${cncData.state as string}`,
             )
+            timer.mark("first_p2p_data_received")
           } else {
             console.warn(
               `[E2E] CNC proxy /data responded ${dataRes?.status() ?? "N/A"} — CNC may be offline`,
@@ -326,6 +373,8 @@ test.describe("CNC → Press: Open Federation + 5-min Sidecar Token", () => {
         "[E2E] Sidecar did not respond — skipping token verification (sidecar may be offline)",
       )
     }
+
+    timer.save({ runId: ctx.runId, federationId, sidecarUrl: ctx.sidecarUrl })
 
     // ── 17. Traceability: CNC dashboard shows access logs ─────────────────────
     await logout(page)

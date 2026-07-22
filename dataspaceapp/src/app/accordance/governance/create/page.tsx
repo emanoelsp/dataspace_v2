@@ -3,30 +3,15 @@
 import React, { useState, useEffect } from "react"
 import { collection, addDoc, serverTimestamp, getDocs, query, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import {
-  Shield,
-  Package,
-  UserCog,
-  Key,
-  Eye,
-  Clock,
-  Undo2,
-  CheckCircle,
-  ChevronLeft,
-} from "lucide-react"
+import { CheckCircle, ChevronLeft, FileLock, Shield } from "lucide-react"
 import Link from "next/link"
 import { buildOwnershipFields, sanitizeMultilineText, sanitizeText } from "@/lib/dataspace"
 import { useAuthUser } from "@/lib/use-auth-user"
 
 const steps = [
-  { id: 1, title: "Federation Selection", icon: Shield },
-  { id: 2, title: "Asset Selection", icon: Package },
-  { id: 3, title: "Roles & Permissions", icon: UserCog },
-  { id: 4, title: "Access Policies", icon: Key },
-  { id: 5, title: "Audit & Traceability", icon: Eye },
-  { id: 6, title: "Usage Periods", icon: Clock },
-  { id: 7, title: "Revocation & Supervision", icon: Undo2 },
-  { id: 8, title: "Review & Submit", icon: CheckCircle },
+  { id: 1, title: "Escopo (Federação + Ativos)", icon: Shield },
+  { id: 2, title: "Políticas de Uso", icon: FileLock },
+  { id: 3, title: "Review & Submit", icon: CheckCircle },
 ]
 
 function StepIndicator({ currentStep }: { currentStep: number }) {
@@ -70,21 +55,17 @@ export default function GovernanceCreatePage() {
   const [assets, setAssets] = useState<Asset[]>([])
   const [selectedAssets, setSelectedAssets] = useState<string[]>([])
   // Step 3: Roles & Permissions
-  const [roles, setRoles] = useState("")
   // Step 4: Access Policies
   const [policies, setPolicies] = useState("")
   const [purposeBinding, setPurposeBinding] = useState(true)
   const [requiresManualApproval, setRequiresManualApproval] = useState(true)
   // Step 5: Audit & Traceability
-  const [audit, setAudit] = useState("")
   // Step 6: Usage Periods
-  const [usagePeriods, setUsagePeriods] = useState("")
   const [agreementTtlHours, setAgreementTtlHours] = useState("24")
   const [accessTokenTtlMinutes, setAccessTokenTtlMinutes] = useState("15")
   // Step 7: Revocation & Supervision
-  const [revocation, setRevocation] = useState("")
   const [revocationMode, setRevocationMode] = useState("owner-manual")
-  // Step 8: Review & Submit
+  // Step 3: Review & Submit
   const [step, setStep] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [submitSuccess, setSubmitSuccess] = useState(false)
@@ -126,22 +107,13 @@ export default function GovernanceCreatePage() {
     fetchAssets()
   }, [federation])
 
-  const isStep1Valid = () => federation.trim() !== ""
-  const isStep2Valid = () => selectedAssets.length > 0
-  const isStep3Valid = () => roles.trim() !== ""
-  const isStep4Valid = () => policies.trim() !== ""
-  const isStep5Valid = () => audit.trim() !== ""
-  const isStep6Valid = () => usagePeriods.trim() !== "" && Number(agreementTtlHours) > 0 && Number(accessTokenTtlMinutes) > 0
-  const isStep7Valid = () => revocation.trim() !== "" && revocationMode.trim() !== ""
+  const isStep1Valid = () => federation.trim() !== "" && selectedAssets.length > 0
+  const isStep2Valid = () =>
+    Number(agreementTtlHours) > 0 && Number(accessTokenTtlMinutes) > 0 && revocationMode.trim() !== ""
 
   const handleNext = () => {
     if (step === 1 && isStep1Valid()) setStep(2)
     else if (step === 2 && isStep2Valid()) setStep(3)
-    else if (step === 3 && isStep3Valid()) setStep(4)
-    else if (step === 4 && isStep4Valid()) setStep(5)
-    else if (step === 5 && isStep5Valid()) setStep(6)
-    else if (step === 6 && isStep6Valid()) setStep(7)
-    else if (step === 7 && isStep7Valid()) setStep(8)
   }
 
   const handleBack = () => {
@@ -155,15 +127,7 @@ export default function GovernanceCreatePage() {
   }
 
   const handleSubmit = async () => {
-    if (
-      !isStep1Valid() ||
-      !isStep2Valid() ||
-      !isStep3Valid() ||
-      !isStep4Valid() ||
-      !isStep5Valid() ||
-      !isStep6Valid() ||
-      !isStep7Valid()
-    ) {
+    if (!isStep1Valid() || !isStep2Valid()) {
       setErrorMessage("Please fill in all required fields before submitting.")
       return
     }
@@ -179,15 +143,16 @@ export default function GovernanceCreatePage() {
       await addDoc(collection(db, "governance"), {
         federation: sanitizeText(federation),
         assets: selectedAssets,
-        roles: sanitizeMultilineText(roles),
+        roles: "",
         policies: sanitizeMultilineText(policies),
         purposeBinding,
         requiresManualApproval,
-        audit: sanitizeMultilineText(audit),
-        usagePeriods: sanitizeMultilineText(usagePeriods),
+        // Auditoria não se digita: é gerada pelo PEP (accessLogs) e pelos aceites (accessTokens).
+        audit: "auto: sidecar accessLogs + accessTokens",
+        usagePeriods: "",
         agreementTtlHours: Number(agreementTtlHours),
         accessTokenTtlMinutes: Number(accessTokenTtlMinutes),
-        revocation: sanitizeMultilineText(revocation),
+        revocation: "",
         revocationMode: sanitizeText(revocationMode),
         createdAt: serverTimestamp(),
         updatedAt: serverTimestamp(),
@@ -228,28 +193,8 @@ export default function GovernanceCreatePage() {
                 ))}
               </select>
             </div>
-            <div className="mt-6 flex justify-end">
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={!isStep1Valid()}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next: Asset Selection
-              </button>
-            </div>
-          </>
-        )
-      case 2:
-        return (
-          <>
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Package className="text-blue-600" size={28} />
-              Step 2: Asset Selection
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Select the assets to govern within the selected federation.
-            </p>
+            <h3 className="text-lg font-semibold text-gray-800 mt-6 mb-2">Ativos governados *</h3>
+            <p className="text-gray-600 mb-3 text-sm">Selecione os ativos desta federação cobertos pela política.</p>
             <div>
               {assets.length === 0 ? (
                 <div className="text-gray-500 italic">No assets found for this federation.</div>
@@ -283,10 +228,105 @@ export default function GovernanceCreatePage() {
               <button
                 type="button"
                 onClick={handleNext}
+                disabled={!isStep1Valid()}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next: Políticas de Uso
+              </button>
+            </div>
+          </>
+        )
+      case 2:
+        return (
+          <>
+            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
+              <FileLock className="text-blue-600" size={28} />
+              Step 2: Políticas de Uso (acionáveis)
+            </h2>
+            <p className="text-gray-600 mb-6">
+              Somente políticas que o sistema consegue impor: TTLs herdados pelos contratos e tokens,
+              aprovação manual, vínculo de finalidade e modo de revogação. Auditoria é automática
+              (logs do Sidecar PEP + registros de aceite).
+            </p>
+            <div className="space-y-4">
+              <div className="grid gap-4 md:grid-cols-2">
+                <div>
+                  <label htmlFor="gov-agreement-ttl" className="block text-sm font-medium text-gray-700 mb-1">Vigência do contrato (horas) *</label>
+                  <input
+                    id="gov-agreement-ttl"
+                    type="number"
+                    min={1}
+                    value={agreementTtlHours}
+                    onChange={(e) => setAgreementTtlHours(e.target.value)}
+                    className="border border-gray-300 p-3 w-full rounded-md shadow-sm"
+                  />
+                </div>
+                <div>
+                  <label htmlFor="gov-token-ttl" className="block text-sm font-medium text-gray-700 mb-1">TTL do token de acesso (minutos) *</label>
+                  <input
+                    id="gov-token-ttl"
+                    type="number"
+                    min={1}
+                    value={accessTokenTtlMinutes}
+                    onChange={(e) => setAccessTokenTtlMinutes(e.target.value)}
+                    className="border border-gray-300 p-3 w-full rounded-md shadow-sm"
+                  />
+                  <p className="mt-1 text-xs text-gray-500">Herdado por todos os tokens emitidos para os ativos selecionados.</p>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">Modo de revogação *</label>
+                <select
+                  value={revocationMode}
+                  onChange={(e) => setRevocationMode(e.target.value)}
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm"
+                >
+                  <option value="owner-manual">Manual pelo proprietário (revoga token no PEP)</option>
+                  <option value="ttl-expiry">Somente por expiração de TTL</option>
+                  <option value="owner-or-admin">Proprietário ou administrador da federação</option>
+                </select>
+              </div>
+              <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                <input type="checkbox" checked={requiresManualApproval} onChange={(e) => setRequiresManualApproval(e.target.checked)} className="mt-1" />
+                <span className="text-sm text-gray-700">
+                  <span className="font-medium text-gray-900">Exigir aprovação manual do proprietário</span>
+                  <span className="block mt-0.5">Cada solicitação de acesso precisa do aceite explícito do dono do dado.</span>
+                </span>
+              </label>
+              <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">
+                <input type="checkbox" checked={purposeBinding} onChange={(e) => setPurposeBinding(e.target.checked)} className="mt-1" />
+                <span className="text-sm text-gray-700">
+                  <span className="font-medium text-gray-900">Vínculo de finalidade (purpose binding)</span>
+                  <span className="block mt-0.5">O consumidor declara a finalidade de uso no contrato; ela acompanha o token.</span>
+                </span>
+              </label>
+              <div>
+                <label htmlFor="gov-policies" className="block text-sm font-medium text-gray-700 mb-1">Condições adicionais (opcional)</label>
+                <textarea
+                  id="gov-policies"
+                  value={policies}
+                  onChange={(e) => setPolicies(e.target.value)}
+                  rows={3}
+                  placeholder="Restrições complementares legíveis por humanos (ex.: uso restrito ao turno 1)"
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm"
+                />
+              </div>
+            </div>
+            <div className="mt-6 flex justify-between">
+              <button
+                type="button"
+                onClick={handleBack}
+                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-3 rounded-md shadow-sm transition-colors"
+              >
+                Previous
+              </button>
+              <button
+                type="button"
+                onClick={handleNext}
                 disabled={!isStep2Valid()}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Next: Roles & Permissions
+                Next: Review & Submit
               </button>
             </div>
           </>
@@ -295,269 +335,8 @@ export default function GovernanceCreatePage() {
         return (
           <>
             <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <UserCog className="text-blue-600" size={28} />
-              Step 3: Roles & Permissions
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Define user roles (e.g., admin, contributor, viewer) and assign permissions for data access and actions.
-            </p>
-            <div>
-              <label htmlFor="gov-roles" className="block text-sm font-medium text-gray-700 mb-1">Roles & Permissions *</label>
-              <textarea
-                id="gov-roles"
-                value={roles}
-                onChange={(e) => setRoles(e.target.value)}
-                placeholder="Describe roles and permissions (e.g., Admin: full access, Viewer: read-only)"
-                required
-                rows={4}
-                className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-              />
-            </div>
-            <div className="mt-6 flex justify-between">
-              <button
-                type="button"
-                onClick={handleBack}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-3 rounded-md shadow-sm transition-colors"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={!isStep3Valid()}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next: Access Policies
-              </button>
-            </div>
-          </>
-        )
-      case 4:
-        return (
-          <>
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Key className="text-blue-600" size={28} />
-              Step 4: Access Policies
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Set up access control policies, including who can view, edit, or share data.
-            </p>
-            <div>
-              <label htmlFor="gov-policies" className="block text-sm font-medium text-gray-700 mb-1">Access Policies *</label>
-              <textarea
-                id="gov-policies"
-                value={policies}
-                onChange={(e) => setPolicies(e.target.value)}
-                placeholder="Describe access policies (e.g., Only managers can approve access requests)"
-                required
-                rows={4}
-                className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-              />
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <label className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={purposeBinding}
-                  onChange={(e) => setPurposeBinding(e.target.checked)}
-                  className="mt-1 h-4 w-4"
-                />
-                <span>Require declared purpose to be bound to agreement and token issuance.</span>
-              </label>
-              <label className="flex items-start gap-3 rounded-xl border border-gray-200 bg-gray-50 p-4 text-sm text-gray-700">
-                <input
-                  type="checkbox"
-                  checked={requiresManualApproval}
-                  onChange={(e) => setRequiresManualApproval(e.target.checked)}
-                  className="mt-1 h-4 w-4"
-                />
-                <span>Require manual owner approval for asset access requests.</span>
-              </label>
-            </div>
-            <div className="mt-6 flex justify-between">
-              <button
-                type="button"
-                onClick={handleBack}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-3 rounded-md shadow-sm transition-colors"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={!isStep4Valid()}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next: Audit & Traceability
-              </button>
-            </div>
-          </>
-        )
-      case 5:
-        return (
-          <>
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Eye className="text-blue-600" size={28} />
-              Step 5: Audit & Traceability
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Enable auditing and traceability to monitor all actions and changes for compliance and security.
-            </p>
-            <div>
-              <label htmlFor="gov-audit" className="block text-sm font-medium text-gray-700 mb-1">Audit & Traceability *</label>
-              <textarea
-                id="gov-audit"
-                value={audit}
-                onChange={(e) => setAudit(e.target.value)}
-                placeholder="Describe audit and traceability mechanisms (e.g., All access is logged and reviewed monthly)"
-                required
-                rows={4}
-                className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-              />
-            </div>
-            <div className="mt-6 flex justify-between">
-              <button
-                type="button"
-                onClick={handleBack}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-3 rounded-md shadow-sm transition-colors"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={!isStep5Valid()}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next: Usage Periods
-              </button>
-            </div>
-          </>
-        )
-      case 6:
-        return (
-          <>
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Clock className="text-blue-600" size={28} />
-              Step 6: Usage Periods
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Define allowed usage periods and retention policies for each asset.
-            </p>
-            <div>
-              <label htmlFor="gov-usage" className="block text-sm font-medium text-gray-700 mb-1">Usage Periods *</label>
-              <textarea
-                id="gov-usage"
-                value={usagePeriods}
-                onChange={(e) => setUsagePeriods(e.target.value)}
-                placeholder="Describe usage periods and retention (e.g., Data can be accessed for 12 months, then archived)"
-                required
-                rows={4}
-                className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-              />
-            </div>
-            <div className="grid gap-4 md:grid-cols-2">
-              <div>
-                <label htmlFor="gov-agreement-ttl" className="block text-sm font-medium text-gray-700 mb-1">Agreement lifetime (hours) *</label>
-                <input
-                  id="gov-agreement-ttl"
-                  type="number"
-                  min={1}
-                  value={agreementTtlHours}
-                  onChange={(e) => setAgreementTtlHours(e.target.value)}
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
-              <div>
-                <label htmlFor="gov-token-ttl" className="block text-sm font-medium text-gray-700 mb-1">Access token lifetime (minutes) *</label>
-                <input
-                  id="gov-token-ttl"
-                  type="number"
-                  min={1}
-                  value={accessTokenTtlMinutes}
-                  onChange={(e) => setAccessTokenTtlMinutes(e.target.value)}
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
-            </div>
-            <div className="mt-6 flex justify-between">
-              <button
-                type="button"
-                onClick={handleBack}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-3 rounded-md shadow-sm transition-colors"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={!isStep6Valid()}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next: Revocation & Supervision
-              </button>
-            </div>
-          </>
-        )
-      case 7:
-        return (
-          <>
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Undo2 className="text-blue-600" size={28} />
-              Step 7: Revocation & Supervision
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Implement mechanisms for revoking access and supervising ongoing data usage.
-            </p>
-            <div>
-              <label htmlFor="gov-revocation" className="block text-sm font-medium text-gray-700 mb-1">Revocation & Supervision *</label>
-              <textarea
-                id="gov-revocation"
-                value={revocation}
-                onChange={(e) => setRevocation(e.target.value)}
-                placeholder="Describe revocation and supervision mechanisms (e.g., Access can be revoked by admins at any time, periodic reviews)"
-                required
-                rows={4}
-                className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">Revocation mode *</label>
-              <select
-                value={revocationMode}
-                onChange={(e) => setRevocationMode(e.target.value)}
-                className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-              >
-                <option value="owner-manual">Owner manual revocation</option>
-                <option value="time-expiry">Automatic expiry</option>
-                <option value="hybrid">Hybrid</option>
-              </select>
-            </div>
-            <div className="mt-6 flex justify-between">
-              <button
-                type="button"
-                onClick={handleBack}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-3 rounded-md shadow-sm transition-colors"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={!isStep7Valid()}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next: Review & Submit
-              </button>
-            </div>
-          </>
-        )
-      case 8:
-        return (
-          <>
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
               <CheckCircle className="text-blue-600" size={28} />
-              Step 8: Review & Submit
+              Step 3: Review & Submit
             </h2>
             <p className="text-gray-600 mb-6">
               Review all information before submitting your governance policy.
@@ -573,13 +352,9 @@ export default function GovernanceCreatePage() {
                   <li key={a.id}>{a.name || a.id}</li>
                 ))}
               </ul>
-              <h3 className="font-semibold text-lg mt-4 mb-2">Roles & Permissions</h3>
+              <h3 className="font-semibold text-lg mt-4 mb-2">Políticas de Uso</h3>
               <p>
-                <strong>Details:</strong> {roles || "N/A"}
-              </p>
-              <h3 className="font-semibold text-lg mt-4 mb-2">Access Policies</h3>
-              <p>
-                <strong>Details:</strong> {policies || "N/A"}
+                <strong>Condições adicionais:</strong> {policies || "—"}
               </p>
               <p>
                 <strong>Purpose binding:</strong> {purposeBinding ? "Required" : "Optional"}
@@ -587,14 +362,8 @@ export default function GovernanceCreatePage() {
               <p>
                 <strong>Manual approval:</strong> {requiresManualApproval ? "Required" : "Optional"}
               </p>
-              <h3 className="font-semibold text-lg mt-4 mb-2">Audit & Traceability</h3>
-              <p>
-                <strong>Details:</strong> {audit || "N/A"}
-              </p>
-              <h3 className="font-semibold text-lg mt-4 mb-2">Usage Periods</h3>
-              <p>
-                <strong>Details:</strong> {usagePeriods || "N/A"}
-              </p>
+              <h3 className="font-semibold text-lg mt-4 mb-2">Auditoria</h3>
+              <p className="text-sm text-gray-600">Automática: logs de acesso do Sidecar PEP + registros de aceite de contrato.</p>
               <p>
                 <strong>Agreement lifetime:</strong> {agreementTtlHours} hour(s)
               </p>
@@ -603,7 +372,7 @@ export default function GovernanceCreatePage() {
               </p>
               <h3 className="font-semibold text-lg mt-4 mb-2">Revocation & Supervision</h3>
               <p>
-                <strong>Details:</strong> {revocation || "N/A"}
+              <p className="text-sm text-gray-600">Modo de revogação acima; execução via token store do PEP.</p>
               </p>
               <p>
                 <strong>Revocation mode:</strong> {revocationMode}

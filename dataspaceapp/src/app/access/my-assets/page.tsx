@@ -17,6 +17,7 @@ import {
   RefreshCw,
   ShieldCheck,
   Globe,
+  Clock,
 } from "lucide-react"
 
 type AssetEntry = {
@@ -30,53 +31,128 @@ type AssetEntry = {
   accessType?: string
   assetType?: string
   description?: string
-  /** true = owned by this user, false = accessed via approved request */
   isOwner: boolean
 }
 
-type LiveRow = Record<string, unknown>
+type Snapshot = {
+  ts: string
+  data: unknown
+}
 
 function formatTimestamp(d: Date) {
   const p = (n: number) => String(n).padStart(2, "0")
   return `${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
-function flattenObject(obj: unknown, prefix = ""): Record<string, string> {
-  if (typeof obj !== "object" || obj === null) return { [prefix || "value"]: String(obj) }
-  const result: Record<string, string> = {}
-  for (const [k, v] of Object.entries(obj as Record<string, unknown>)) {
-    const key = prefix ? `${prefix}.${k}` : k
-    if (typeof v === "object" && v !== null && !Array.isArray(v)) {
-      Object.assign(result, flattenObject(v, key))
-    } else if (Array.isArray(v)) {
-      result[key] = JSON.stringify(v)
-    } else {
-      result[key] = v === null || v === undefined ? "—" : String(v)
-    }
-  }
-  return result
+function renderVal(v: unknown): string {
+  if (v === null || v === undefined) return "—"
+  if (typeof v === "object") return JSON.stringify(v)
+  return String(v)
 }
 
-function extractRows(data: unknown): LiveRow[] {
-  if (Array.isArray(data)) return data.slice(0, 1).map((item) => flattenObject(item))
-  if (typeof data === "object" && data !== null) {
-    const d = data as Record<string, unknown>
-    if (Array.isArray(d.data) && d.data.length > 0) return [flattenObject(d.data[0])]
-    return [flattenObject(data)]
+function extractPayload(raw: unknown): unknown {
+  if (Array.isArray(raw) && raw.length > 0) return raw[0]
+  if (typeof raw === "object" && raw !== null) {
+    const d = raw as Record<string, unknown>
+    if (Array.isArray(d.data) && d.data.length > 0) return d.data[0]
+    return raw
   }
-  return [{ value: String(data) }]
+  return raw
+}
+
+// Generic renderer: primitives as tag grid, objects as labeled sections
+function DataDisplay({ data }: { data: unknown }) {
+  if (data === null || data === undefined) return null
+
+  if (typeof data !== "object" || Array.isArray(data)) {
+    return (
+      <div className="text-xs font-mono bg-gray-50 rounded p-2 text-gray-800">
+        {Array.isArray(data) ? JSON.stringify(data, null, 2) : String(data)}
+      </div>
+    )
+  }
+
+  const entries = Object.entries(data as Record<string, unknown>)
+  const primitives = entries.filter(
+    ([, v]) => typeof v !== "object" || v === null,
+  )
+  const nested = entries.filter(
+    ([, v]) => typeof v === "object" && v !== null && !Array.isArray(v),
+  )
+  const arrays = entries.filter(([, v]) => Array.isArray(v))
+
+  return (
+    <div className="space-y-3">
+      {/* Primitive fields */}
+      {primitives.length > 0 && (
+        <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 gap-2">
+          {primitives.map(([k, v]) => (
+            <div key={k} className="bg-gray-50 rounded-lg border border-gray-200 px-3 py-2 min-w-0">
+              <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide truncate">{k}</p>
+              <p className="text-sm text-gray-900 font-mono truncate" title={renderVal(v)}>
+                {renderVal(v)}
+              </p>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Nested object sections */}
+      {nested.length > 0 && (
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+          {nested.map(([sectionKey, sectionVal]) => {
+            const subEntries = Object.entries(sectionVal as Record<string, unknown>)
+            return (
+              <div key={sectionKey} className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+                <div className="bg-gray-50 border-b border-gray-200 px-3 py-1.5">
+                  <p className="text-[10px] font-bold text-gray-500 uppercase tracking-wider">{sectionKey}</p>
+                </div>
+                <div className="px-3 py-2 space-y-1">
+                  {subEntries.map(([k, v]) =>
+                    typeof v === "object" && v !== null ? (
+                      <div key={k}>
+                        <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide">{k}</p>
+                        <p className="text-xs font-mono text-gray-700 truncate">{JSON.stringify(v)}</p>
+                      </div>
+                    ) : (
+                      <div key={k} className="flex justify-between gap-2 items-baseline">
+                        <span className="text-xs text-gray-500 shrink-0 max-w-[45%] truncate">{k}</span>
+                        <span className="text-xs font-mono text-gray-900 text-right truncate" title={renderVal(v)}>
+                          {renderVal(v)}
+                        </span>
+                      </div>
+                    )
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+      )}
+
+      {/* Array fields */}
+      {arrays.map(([k, v]) => (
+        <div key={k}>
+          <p className="text-[10px] text-gray-400 font-semibold uppercase tracking-wide mb-1">{k}</p>
+          <p className="text-xs font-mono text-gray-700 bg-gray-50 rounded p-2 break-all">
+            {JSON.stringify(v)}
+          </p>
+        </div>
+      ))}
+    </div>
+  )
 }
 
 function AssetLiveFeed({ asset }: { asset: AssetEntry }) {
   const [expanded, setExpanded] = useState(false)
   const [live, setLive] = useState(false)
-  const [rows, setRows] = useState<LiveRow[]>([])
-  const [columns, setColumns] = useState<string[]>([])
+  const [snapshots, setSnapshots] = useState<Snapshot[]>([])
   const [lastFetch, setLastFetch] = useState<Date | null>(null)
   const [fetchError, setFetchError] = useState<string | null>(null)
   const [online, setOnline] = useState<boolean | null>(null)
   const [rawJson, setRawJson] = useState<string | null>(null)
   const [showRaw, setShowRaw] = useState(false)
+  const [historyOpen, setHistoryOpen] = useState(false)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
 
   const fetchData = useCallback(async () => {
@@ -86,11 +162,9 @@ function AssetLiveFeed({ asset }: { asset: AssetEntry }) {
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
       const json = await res.json()
       setRawJson(JSON.stringify(json, null, 2))
-      const extracted = extractRows(json)
-      if (extracted.length === 0) return
-      const row = { _time: formatTimestamp(new Date()), ...extracted[0] }
-      setColumns((prev) => (prev.length > 0 ? prev : Object.keys(row)))
-      setRows((prev) => [row, ...prev].slice(0, 60))
+      const payload = extractPayload(json)
+      const now = new Date()
+      setSnapshots((prev) => [{ ts: formatTimestamp(now), data: payload }, ...prev].slice(0, 60))
       setOnline(true)
       setFetchError(null)
     } catch (e) {
@@ -115,16 +189,17 @@ function AssetLiveFeed({ asset }: { asset: AssetEntry }) {
     if (live) {
       setLive(false)
     } else {
-      setRows([])
-      setColumns([])
+      setSnapshots([])
       setLive(true)
     }
   }
 
   const hasEndpoint = Boolean(asset.apiEndpoint)
+  const latest = snapshots[0] ?? null
 
   return (
     <div className="rounded-xl border border-gray-200 bg-white shadow-sm overflow-hidden">
+      {/* Header row */}
       <button
         type="button"
         onClick={() => setExpanded((v) => !v)}
@@ -178,19 +253,11 @@ function AssetLiveFeed({ asset }: { asset: AssetEntry }) {
       {expanded && (
         <div className="border-t border-gray-100 bg-gray-50/60 px-5 py-4 space-y-4">
           {/* Meta info */}
-          <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs text-gray-600">
-            {asset.assetType && (
-              <div><span className="font-medium text-gray-700 block">Type</span>{asset.assetType}</div>
-            )}
-            {asset.dataFormat && (
-              <div><span className="font-medium text-gray-700 block">Format</span>{asset.dataFormat}</div>
-            )}
-            {asset.exchangeMode && (
-              <div><span className="font-medium text-gray-700 block">Exchange</span>{asset.exchangeMode}</div>
-            )}
-            {asset.accessType && (
-              <div><span className="font-medium text-gray-700 block">Access</span>{asset.accessType}</div>
-            )}
+          <div className="flex flex-wrap gap-4 text-xs text-gray-600">
+            {asset.assetType && <span><strong className="text-gray-700">Type:</strong> {asset.assetType}</span>}
+            {asset.dataFormat && <span><strong className="text-gray-700">Format:</strong> {asset.dataFormat}</span>}
+            {asset.exchangeMode && <span><strong className="text-gray-700">Exchange:</strong> {asset.exchangeMode}</span>}
+            {asset.accessType && <span><strong className="text-gray-700">Access:</strong> {asset.accessType}</span>}
           </div>
 
           {asset.apiEndpoint && (
@@ -217,11 +284,7 @@ function AssetLiveFeed({ asset }: { asset: AssetEntry }) {
                   : "bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-40"
               }`}
             >
-              {live ? (
-                <><Square className="h-4 w-4" /> Stop feed</>
-              ) : (
-                <><Play className="h-4 w-4" /> Start live feed</>
-              )}
+              {live ? <><Square className="h-4 w-4" /> Stop feed</> : <><Play className="h-4 w-4" /> Start live feed</>}
             </button>
 
             {!live && hasEndpoint && (
@@ -252,68 +315,71 @@ function AssetLiveFeed({ asset }: { asset: AssetEntry }) {
           )}
 
           {showRaw && rawJson && (
-            <pre className="bg-slate-900 text-emerald-300 text-xs rounded-lg p-4 overflow-x-auto max-h-64">
+            <pre className="bg-slate-900 text-emerald-300 text-xs rounded-lg p-4 overflow-x-auto max-h-72 leading-relaxed">
               {rawJson}
             </pre>
           )}
 
-          {/* Live data table */}
-          {rows.length > 0 && columns.length > 0 && (
+          {/* Latest reading */}
+          {latest ? (
             <div>
-              <div className="flex items-center gap-2 mb-2">
-                <Activity className="h-4 w-4 text-blue-600" />
-                <span className="text-sm font-medium text-gray-700">Real-time readings</span>
-                <span className="text-xs text-gray-400">({rows.length} samples)</span>
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Activity className="h-4 w-4 text-blue-600" />
+                  <span className="text-sm font-semibold text-gray-700">Latest reading</span>
+                  <span className="text-xs text-gray-400 font-mono bg-gray-100 px-2 py-0.5 rounded">
+                    {latest.ts}
+                  </span>
+                  {live && (
+                    <span className="text-xs text-green-600 animate-pulse">● updating every 2s</span>
+                  )}
+                </div>
+                {snapshots.length > 1 && (
+                  <button
+                    type="button"
+                    onClick={() => setHistoryOpen((v) => !v)}
+                    className="flex items-center gap-1 text-xs text-gray-500 hover:text-gray-800"
+                  >
+                    <Clock className="h-3.5 w-3.5" />
+                    {historyOpen ? "Hide history" : `History (${snapshots.length})`}
+                  </button>
+                )}
               </div>
-              <div className="overflow-x-auto rounded-lg border border-gray-200">
-                <table className="min-w-full text-xs">
-                  <thead>
-                    <tr className="bg-gray-50 border-b border-gray-200">
-                      {columns.map((col) => (
-                        <th
-                          key={col}
-                          className="px-3 py-2 text-left font-semibold text-gray-500 uppercase tracking-wide whitespace-nowrap"
-                        >
-                          {col === "_time" ? "Time" : col.replace(/_/g, " ")}
-                        </th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-gray-100 bg-white">
-                    {rows.slice(0, 20).map((row, i) => (
-                      <tr
-                        key={i}
-                        className={`transition ${i === 0 && live ? "bg-blue-50/60" : "hover:bg-gray-50"}`}
-                      >
-                        {columns.map((col) => (
-                          <td
-                            key={col}
-                            className={`px-3 py-2 font-mono whitespace-nowrap ${
-                              col === "_time" ? "text-gray-400" : "text-gray-800"
-                            }`}
-                          >
-                            {row[col] !== undefined ? String(row[col]) : "—"}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-              {rows.length > 20 && (
-                <p className="text-xs text-gray-400 mt-1 text-right">
-                  Showing 20 of {rows.length} samples
-                </p>
-              )}
+              <DataDisplay data={latest.data} />
             </div>
+          ) : (
+            !fetchError && (
+              <p className="text-sm text-gray-400 italic">
+                {hasEndpoint
+                  ? 'Click "Start live feed" or "Fetch once" to load data.'
+                  : "This asset has no API endpoint configured."}
+              </p>
+            )
           )}
 
-          {rows.length === 0 && !fetchError && (
-            <p className="text-sm text-gray-400 italic">
-              {hasEndpoint
-                ? 'Click "Start live feed" or "Fetch once" to load data.'
-                : "This asset has no API endpoint configured."}
-            </p>
+          {/* History: compact timestamps */}
+          {historyOpen && snapshots.length > 1 && (
+            <div className="rounded-lg border border-gray-200 bg-white overflow-hidden">
+              <div className="bg-gray-50 border-b border-gray-200 px-3 py-2">
+                <p className="text-xs font-semibold text-gray-500">Fetch history</p>
+              </div>
+              <div className="divide-y divide-gray-100 max-h-64 overflow-y-auto">
+                {snapshots.slice(1).map((snap, i) => (
+                  <div key={i} className="flex items-center gap-3 px-3 py-2">
+                    <span className="font-mono text-xs text-gray-400 w-16 shrink-0">{snap.ts}</span>
+                    <span className="text-xs text-gray-500 truncate">
+                      {snap.data && typeof snap.data === "object"
+                        ? Object.entries(snap.data as Record<string, unknown>)
+                            .filter(([, v]) => typeof v !== "object")
+                            .slice(0, 3)
+                            .map(([k, v]) => `${k}: ${v}`)
+                            .join("  ·  ")
+                        : String(snap.data)}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            </div>
           )}
         </div>
       )}
@@ -344,7 +410,6 @@ export default function MyAssetsPage() {
         setError("")
 
         if (isOwner) {
-          // Data owner: fetch their own assets directly
           const snap = await getDocs(
             query(collection(db, "assets"), where("ownerId", "==", user.uid))
           )
@@ -366,7 +431,6 @@ export default function MyAssetsPage() {
           })
           if (!cancelled) setAssets(list)
         } else {
-          // Data client: fetch approved access requests
           const snap = await getDocs(
             query(
               collection(db, "accessRequests"),

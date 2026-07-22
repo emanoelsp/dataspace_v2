@@ -107,10 +107,28 @@ export async function finalizeAccessRequestDecisionAdmin(
     ...ownerFieldsFromToken(decoded),
   })
 
-  const govSnap = await db.collection("governance").doc(assetId).get().catch(() => null)
-  const ttlMinutes: number =
-    (govSnap?.exists ? (govSnap.data()?.accessTokenTtlMinutes as number | undefined) : undefined) ??
-    60
+  // Política de governança do ativo: documentos têm o campo assets[] (array).
+  // (O lookup antigo por doc(assetId) nunca encontrava nada — herança quebrada.)
+  const govQuery = await db
+    .collection("governance")
+    .where("assets", "array-contains", assetId)
+    .orderBy("createdAt", "desc")
+    .limit(1)
+    .get()
+    .catch(() => null)
+  const govDoc = govQuery && !govQuery.empty ? govQuery.docs[0] : null
+  const gov = govDoc?.data() ?? {}
+  const governanceSnapshot = govDoc
+    ? {
+        policyId: govDoc.id,
+        accessTokenTtlMinutes: (gov.accessTokenTtlMinutes as number | undefined) ?? 60,
+        purposeBinding: Boolean(gov.purposeBinding),
+        requiresManualApproval: Boolean(gov.requiresManualApproval),
+        revocationMode: (gov.revocationMode as string | undefined) ?? "owner-manual",
+        conditions: (gov.policies as string | undefined) ?? "",
+      }
+    : undefined
+  const ttlMinutes: number = governanceSnapshot?.accessTokenTtlMinutes ?? 60
 
   const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000)
   const tokenValue = randomToken(24)
@@ -135,7 +153,9 @@ export async function finalizeAccessRequestDecisionAdmin(
   // Push token to sidecar proxy (non-blocking)
   const assetDoc = assetSnap.exists ? assetSnap.data()! : {}
   const sidecarEndpoint = (assetDoc.sidecarEndpoint as string | undefined) ?? ""
-  const equipmentType = normalizeEquipmentType(assetDoc.assetType as string | undefined, assetDoc.irdi as string | undefined)
+  const equipmentType =
+    (assetDoc.equipmentSlug as string | undefined) ||
+    normalizeEquipmentType(assetDoc.assetType as string | undefined, assetDoc.irdi as string | undefined)
 
   if (sidecarEndpoint && equipmentType) {
     const requesterSnap = await db.collection("users").doc(requesterId).get().catch(() => null)
@@ -156,6 +176,7 @@ export async function finalizeAccessRequestDecisionAdmin(
       governanceAcceptedAt: new Date().toISOString(),
       contractRef: (data.contractAgreementId as string) ?? accessRequestId,
       permissions: ["data", "aas"],
+      governance: governanceSnapshot,
     }, sidecarEndpoint)
   }
 }

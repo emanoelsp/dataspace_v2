@@ -7,3 +7,11 @@ test-results/
 Artigo ICE/
 Usados Quali/
 api-equipment/
+
+# artefatos de teste/execução (não versionar)
+*.log
+results/
+metricas-latencia/
+scenario/results-cenario2-*
+scenario/tokens-cenario2.json
+dataspaceapp/results/

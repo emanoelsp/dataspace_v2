@@ -19,10 +19,7 @@ import {
   buildConnectorProfileFields,
   buildDefaultConnectorMirrorFields,
   buildEmptyConnectorProfile,
-  CONNECTOR_ENVIRONMENTS,
   CONNECTOR_ROLES,
-  CONNECTOR_SCOPE_TYPES,
-  SIDECAR_PROTOCOLS,
 } from "@/lib/connector-profiles"
 import { buildOwnershipFields } from "@/lib/dataspace"
 import { useUserProfile } from "@/lib/use-user-profile"
@@ -142,17 +139,21 @@ export default function ConfigureConnectorPage() {
     if (normalized.organizationLegalName.length < 2) {
       return "Legal organization name is required."
     }
-    if (normalized.scopeLabel.length < 2) {
-      return "Project, department, plant, or ecosystem label is required."
+    // O sidecar é o elo empresa→PEP: sem ele, ativos não são registrados nem
+    // tokens entregues. Obrigatório para quem provê dados.
+    if (form.connectorRole !== "consumer") {
+      try {
+        new URL(form.sidecarEndpoint)
+      } catch {
+        return "Sidecar endpoint is required for provider/hybrid connectors (e.g. http://192.168.0.10:3100)."
+      }
     }
-    if (normalized.participantId.length < 2) {
-      return "Participant ID is required."
-    }
-    if (!normalized.connectorDspBaseUrl) {
-      return "DSP / protocol base URL must be a valid URL."
-    }
-
     return null
+  }
+
+  const autoParticipantId = () => {
+    const org = form.organizationLegalName.toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "") || "org"
+    return `urn:dataspace:participant:${org}:${Math.random().toString(36).slice(2, 6)}`
   }
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -169,7 +170,10 @@ export default function ConfigureConnectorPage() {
       setSaving(true)
       setMessage(null)
 
-      const connector = buildConnectorProfileFields(form)
+      const connector = buildConnectorProfileFields({
+        ...form,
+        participantId: form.participantId.trim() || autoParticipantId(),
+      })
       const existingSnapshot = await getDocs(query(collection(db, "connectorProfiles"), where("ownerId", "==", user.uid)))
       const existingRows = existingSnapshot.docs.map((snapshot) => ({
         id: snapshot.id,
@@ -272,10 +276,11 @@ export default function ConfigureConnectorPage() {
       </div>
 
       <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50/70 p-5 text-sm text-blue-900">
-        <p className="font-semibold text-blue-950">Intraorganizational connector model</p>
+        <p className="font-semibold text-blue-950">Conector intraorganizacional</p>
         <p className="mt-2">
-          Use one connector per project, department, plant, customer enclave, or ecosystem when you need isolated maintenance windows,
-          network zones, trust relationships, or sidecar connections to the shop floor.
+          O conector identifica o participante no plano de controle e aponta para o <b>Sidecar PEP</b> da
+          fábrica — é por ele que os CPS são registrados e os tokens entregues. Identidade avançada
+          (certificados/DAPS/SSI) e URLs de protocolo DSP pertencem à evolução interorganizacional.
         </p>
       </div>
 
@@ -334,161 +339,35 @@ export default function ConfigureConnectorPage() {
             </select>
           </div>
           <div>
-            <label htmlFor="connector-participant-id" className="block text-sm font-medium text-gray-700">Participant ID *</label>
+            <label htmlFor="connector-participant-id" className="block text-sm font-medium text-gray-700">Participant ID (auto se vazio)</label>
             <input
               id="connector-participant-id"
               type="text"
               value={form.participantId}
               onChange={(event) => setField("participantId", event.target.value)}
               className="mt-1 block w-full rounded-md border border-gray-300 p-2 font-mono text-sm shadow-sm"
-              placeholder="urn:company:project:connector"
-              required
+              placeholder="urn:dataspace:participant:... (gerado automaticamente se vazio)"
             />
           </div>
         </div>
 
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Scope type *</label>
-            <select
-              value={form.scopeType}
-              onChange={(event) => setField("scopeType", event.target.value as typeof form.scopeType)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
-            >
-              {CONNECTOR_SCOPE_TYPES.map((value) => (
-                <option key={value} value={value}>
-                  {value === "department"
-                    ? "Department"
-                    : value === "project"
-                      ? "Project"
-                      : value === "plant"
-                        ? "Plant"
-                        : value === "customer"
-                          ? "Customer enclave"
-                          : value === "ecosystem"
-                            ? "External ecosystem"
-                            : "Shared service"}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="connector-scope-label" className="block text-sm font-medium text-gray-700">Scope label *</label>
-            <input
-              id="connector-scope-label"
-              type="text"
-              value={form.scopeLabel}
-              onChange={(event) => setField("scopeLabel", event.target.value)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
-              placeholder="e.g. Body Shop Line 3"
-              required
-            />
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Environment *</label>
-            <select
-              value={form.environment}
-              onChange={(event) => setField("environment", event.target.value as typeof form.environment)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
-            >
-              {CONNECTOR_ENVIRONMENTS.map((value) => (
-                <option key={value} value={value}>
-                  {value === "shop-floor"
-                    ? "Shop floor"
-                    : value.charAt(0).toUpperCase() + value.slice(1)}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Network zone</label>
-            <input
-              type="text"
-              value={form.networkZone}
-              onChange={(event) => setField("networkZone", event.target.value)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
-              placeholder="e.g. OT Zone A / VLAN 120"
-            />
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Sidecar protocol *</label>
-            <select
-              value={form.sidecarProtocol}
-              onChange={(event) => setField("sidecarProtocol", event.target.value as typeof form.sidecarProtocol)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
-            >
-              {SIDECAR_PROTOCOLS.map((value) => (
-                <option key={value} value={value}>
-                  {value.toUpperCase()}
-                </option>
-              ))}
-            </select>
-          </div>
-          <div>
-            <label htmlFor="connector-sidecar-endpoint" className="block text-sm font-medium text-gray-700">Sidecar endpoint</label>
-            <input
-              id="connector-sidecar-endpoint"
-              type="text"
-              value={form.sidecarEndpoint}
-              onChange={(event) => setField("sidecarEndpoint", event.target.value)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 font-mono text-sm shadow-sm"
-              placeholder="http://edge-gateway.local:8080 or mqtt://broker.local:1883"
-            />
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label htmlFor="connector-dsp-url" className="block text-sm font-medium text-gray-700">DSP / protocol base URL *</label>
-            <input
-              id="connector-dsp-url"
-              type="url"
-              value={form.connectorDspBaseUrl}
-              onChange={(event) => setField("connectorDspBaseUrl", event.target.value)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 font-mono text-sm shadow-sm"
-              placeholder="https://connector.example.org/api/v1/dsp"
-              required
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Management API base URL</label>
-            <input
-              type="url"
-              value={form.connectorManagementBaseUrl}
-              onChange={(event) => setField("connectorManagementBaseUrl", event.target.value)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 font-mono text-sm shadow-sm"
-              placeholder="https://connector.example.org/api/management"
-            />
-          </div>
-        </div>
-
-        <div className="grid gap-4 md:grid-cols-2">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Federated catalog URL</label>
-            <input
-              type="url"
-              value={form.federatedCatalogUrl}
-              onChange={(event) => setField("federatedCatalogUrl", event.target.value)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 font-mono text-sm shadow-sm"
-              placeholder="https://catalog.dataspace.example.org"
-            />
-          </div>
-          <div>
-            <label className="block text-sm font-medium text-gray-700">Certificate / identity reference</label>
-            <input
-              type="text"
-              value={form.certificateRef}
-              onChange={(event) => setField("certificateRef", event.target.value)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
-              placeholder="e.g. x509://corp-pki/provider-01"
-            />
-          </div>
+        <div>
+          <label htmlFor="connector-sidecar-endpoint" className="block text-sm font-medium text-gray-700">
+            Sidecar endpoint {form.connectorRole !== "consumer" ? "*" : "(opcional para consumer)"}
+          </label>
+          <input
+            id="connector-sidecar-endpoint"
+            type="text"
+            value={form.sidecarEndpoint}
+            onChange={(event) => setField("sidecarEndpoint", event.target.value)}
+            className="mt-1 block w-full rounded-md border border-gray-300 p-2 font-mono text-sm shadow-sm"
+            placeholder="http://192.168.0.10:3100"
+            required={form.connectorRole !== "consumer"}
+          />
+          <p className="mt-1 text-xs text-gray-500">
+            URL do Sidecar PEP na rede da fábrica. Os CPS deste conector serão registrados nele e os
+            tokens de acesso entregues a ele.
+          </p>
         </div>
 
         <label className="flex items-start gap-3 rounded-lg border border-gray-200 bg-gray-50 px-4 py-3">

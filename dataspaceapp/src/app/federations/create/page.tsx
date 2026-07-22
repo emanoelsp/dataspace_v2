@@ -3,17 +3,16 @@
 import React, { useState } from "react"
 import { addDoc, collection, getDocs, query, serverTimestamp, where } from "firebase/firestore"
 import { db } from "@/lib/firebase"
-import { CheckCircle, Building, Layers, Users, FileText, ChevronLeft, X } from "lucide-react"
+import { CheckCircle, Building, Layers, FileText, ChevronLeft, X } from "lucide-react"
 import Link from "next/link"
-import { buildOwnershipFields, sanitizeCsvText, sanitizeMultilineText, sanitizeText, sanitizeUrl } from "@/lib/dataspace"
-import { ADMISSION_MODES, CATALOG_VISIBILITIES, mapLegacyFederationType } from "@/lib/intra-dataspace"
+import { buildOwnershipFields, sanitizeMultilineText, sanitizeText } from "@/lib/dataspace"
+import { mapLegacyFederationType } from "@/lib/intra-dataspace"
 import { useUserProfile } from "@/lib/use-user-profile"
 
 const steps = [
   { id: 1, title: "Basic Info", icon: Building },
-  { id: 2, title: "Federation Structure", icon: Layers },
-  { id: 3, title: "Contact Info", icon: Users },
-  { id: 4, title: "Review & Submit", icon: FileText },
+  { id: 2, title: "Federation Type", icon: Layers },
+  { id: 3, title: "Review & Submit", icon: FileText },
 ]
 
 // Toast Modal
@@ -82,17 +81,17 @@ function StepIndicator({ currentStep, submitSuccess }: { currentStep: number, su
         <div key={id} className="flex flex-col items-center mx-2">
           <div
             className={`w-10 h-10 rounded-full flex items-center justify-center font-bold text-white transition-all duration-300 ${
-              (id < 4 && currentStep >= id) || (id === 4 && submitSuccess)
+              (id < 3 && currentStep >= id) || (id === 3 && (currentStep >= 3 || submitSuccess))
                 ? "bg-blue-600"
                 : "bg-gray-300"
             }`}
           >
-            {(id < 4 && currentStep > id) || (id === 4 && submitSuccess)
+            {(id < 3 && currentStep > id) || (id === 3 && submitSuccess)
               ? <CheckCircle size={20} />
               : <Icon size={20} />}
           </div>
           <p className={`text-sm mt-2 ${
-            (id < 4 && currentStep >= id) || (id === 4 && submitSuccess)
+            (id < 3 && currentStep >= id) || (id === 3 && (currentStep >= 3 || submitSuccess))
               ? "text-blue-600 font-semibold"
               : "text-gray-500"
           }`}>
@@ -129,11 +128,6 @@ export default function CreateFederationPage() {
   const [federationType, setFederationType] = useState("")
   const [catalogVisibility, setCatalogVisibility] = useState("")
   const [admissionMode, setAdmissionMode] = useState("")
-  const [dataDomains, setDataDomains] = useState("")
-  const [mainDomain, setMainDomain] = useState("")
-
-  const [contactEmail, setContactEmail] = useState("")
-  const [website, setWebsite] = useState("")
 
   const [step, setStep] = useState(1)
   const [isSubmitting, setIsSubmitting] = useState(false)
@@ -181,15 +175,8 @@ export default function CreateFederationPage() {
   const isStep1Valid = () =>
     name.trim() !== "" &&
     description.trim() !== "" &&
-    organization.trim() !== "" &&
     selectedConnectorId.trim() !== ""
-  const isStep2Valid = () =>
-    federationType.trim() !== "" &&
-    catalogVisibility.trim() !== "" &&
-    admissionMode.trim() !== "" &&
-    dataDomains.trim() !== "" &&
-    mainDomain.trim() !== ""
-  const isStep3Valid = () => contactEmail.trim() !== ""
+  const isStep2Valid = () => federationType.trim() !== ""
 
   const handleFederationTypeChange = (value: string) => {
     setFederationType(value)
@@ -201,7 +188,6 @@ export default function CreateFederationPage() {
   const handleNext = () => {
     if (step === 1 && isStep1Valid()) setStep(2)
     else if (step === 2 && isStep2Valid()) setStep(3)
-    else if (step === 3 && isStep3Valid()) setStep(4)
   }
 
   const handleBack = () => {
@@ -209,7 +195,7 @@ export default function CreateFederationPage() {
   }
 
    const handleSubmit = async () => {
-    if (!isStep1Valid() || !isStep2Valid() || !isStep3Valid()) {
+    if (!isStep1Valid() || !isStep2Valid()) {
       setErrorMessage("Please fill in all required fields before submitting.")
       return
     }
@@ -219,12 +205,7 @@ export default function CreateFederationPage() {
       return
     }
 
-    const normalizedWebsite = website.trim() ? sanitizeUrl(website) : ""
 
-    if (website.trim() && !normalizedWebsite) {
-      setErrorMessage("Please provide a valid website URL.")
-      return
-    }
 
     setIsSubmitting(true)
     setErrorMessage("")
@@ -252,10 +233,10 @@ export default function CreateFederationPage() {
         federationType: sanitizeText(federationType),
         catalogVisibility: sanitizeText(catalogVisibility),
         admissionMode: sanitizeText(admissionMode),
-        dataDomains: sanitizeCsvText(dataDomains),
-        mainDomain: sanitizeText(mainDomain),
-        contactEmail: contactEmail.trim().toLowerCase(),
-        website: normalizedWebsite,
+        dataDomains: "",
+        mainDomain: "",
+        contactEmail: (user.email ?? "").toLowerCase(),
+        website: "",
         publishedInCatalog: true,
         status: "draft",
         createdAt: serverTimestamp(),
@@ -380,67 +361,26 @@ export default function CreateFederationPage() {
                   className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
                 >
                   <option value="">-- Select Type --</option>
-                  <option value="Open">Open (anyone can join)</option>
-                  <option value="Consortium">Consortium (invite only)</option>
-                  <option value="Private">Private (restricted access)</option>
+                  <option value="Open">Aberta — assina o contrato e consome</option>
+                  <option value="Consortium">Consórcio — entrada somente por convite</option>
+                  <option value="Private">Privada — solicitação + aprovação</option>
                 </select>
               </div>
-              <div className="grid gap-4 md:grid-cols-2">
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Catalog Visibility *</label>
-                  <select
-                    value={catalogVisibility}
-                    onChange={(e) => setCatalogVisibility(e.target.value)}
-                    required
-                    className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                  >
-                    <option value="">-- Select Visibility --</option>
-                    {CATALOG_VISIBILITIES.map((value) => (
-                      <option key={value} value={value}>
-                        {value === "public" ? "Public catalog" : value === "members" ? "Members only" : "Hidden"}
-                      </option>
-                    ))}
-                  </select>
+              {federationType ? (
+                <div className="rounded-md border border-blue-200 bg-blue-50 p-4 text-sm text-blue-900">
+                  <p className="font-semibold mb-1">Fluxo de adesão derivado do tipo:</p>
+                  {federationType === "Open" ? (
+                    <p>🔓 <b>Aberta</b> — visível no catálogo; qualquer participante assina o contrato e consome, sem pré-aprovação.</p>
+                  ) : federationType === "Consortium" ? (
+                    <p>✉️ <b>Consórcio</b> — catálogo restrito aos membros; a entrada ocorre exclusivamente por convite do dono.</p>
+                  ) : (
+                    <p>🔒 <b>Privada</b> — visível no catálogo para permitir a descoberta; a entrada exige solicitação e aprovação do dono.</p>
+                  )}
+                  <p className="mt-2 text-xs text-blue-700">
+                    catalogVisibility: <span className="font-mono">{catalogVisibility}</span> · admissionMode: <span className="font-mono">{admissionMode}</span>
+                  </p>
                 </div>
-                <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-1">Admission Mode *</label>
-                  <select
-                    value={admissionMode}
-                    onChange={(e) => setAdmissionMode(e.target.value)}
-                    required
-                    className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                  >
-                    <option value="">-- Select Admission --</option>
-                    {ADMISSION_MODES.map((value) => (
-                      <option key={value} value={value}>
-                        {value === "self-service" ? "Self-service" : value === "approval" ? "Approval required" : "Invite only"}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-              <div>
-                <label htmlFor="fed-domains" className="block text-sm font-medium text-gray-700 mb-1">Data Domains *</label>
-                <input
-                  id="fed-domains"
-                  value={dataDomains}
-                  onChange={(e) => setDataDomains(e.target.value)}
-                  placeholder="e.g. Mobility, Energy, Healthcare"
-                  required
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
-              <div>
-                <label htmlFor="fed-main-domain" className="block text-sm font-medium text-gray-700 mb-1">Main Domain of Expertise *</label>
-                <input
-                  id="fed-main-domain"
-                  value={mainDomain}
-                  onChange={(e) => setMainDomain(e.target.value)}
-                  placeholder="e.g. Mobility"
-                  required
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
+              ) : null}
             </div>
             <div className="mt-6 flex justify-between">
               <button
@@ -456,7 +396,7 @@ export default function CreateFederationPage() {
                 disabled={!isStep2Valid()}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Next: Contact Info
+                Next: Review & Submit
               </button>
             </div>
           </>
@@ -465,61 +405,8 @@ export default function CreateFederationPage() {
         return (
           <>
             <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
-              <Users className="text-blue-600" size={28} />
-              Step 3: Contact Information
-            </h2>
-            <p className="text-gray-600 mb-6">
-              Provide contact details for this federation. This will be visible to potential members.
-            </p>
-            <div className="space-y-4">
-              <div>
-                <label htmlFor="fed-contact-email" className="block text-sm font-medium text-gray-700 mb-1">Contact Email *</label>
-                <input
-                  id="fed-contact-email"
-                  type="email"
-                  value={contactEmail}
-                  onChange={(e) => setContactEmail(e.target.value)}
-                  placeholder="contact@example.com"
-                  required
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">Website</label>
-                <input
-                  type="url"
-                  value={website}
-                  onChange={(e) => setWebsite(e.target.value)}
-                  placeholder="https://example.com"
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
-            </div>
-            <div className="mt-6 flex justify-between">
-              <button
-                type="button"
-                onClick={handleBack}
-                className="bg-gray-300 hover:bg-gray-400 text-gray-800 font-semibold px-6 py-3 rounded-md shadow-sm transition-colors"
-              >
-                Previous
-              </button>
-              <button
-                type="button"
-                onClick={handleNext}
-                disabled={!isStep3Valid()}
-                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                Next: Review & Submit
-              </button>
-            </div>
-          </>
-        )
-      case 4:
-        return (
-          <>
-            <h2 className="text-2xl font-semibold text-gray-800 mb-4 flex items-center gap-2">
               <FileText className="text-blue-600" size={28} />
-              Step 4: Review & Submit
+              Step 3: Review & Submit
             </h2>
             <p className="text-gray-600 mb-6">
               Carefully review your federation details below. This document summarizes all provided information in a formal, printable format.
@@ -541,13 +428,6 @@ export default function CreateFederationPage() {
                 <p><strong>Type:</strong> {federationType || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Catalog Visibility:</strong> {catalogVisibility || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Admission Mode:</strong> {admissionMode || <span className="text-gray-400">N/A</span>}</p>
-                <p><strong>Data Domains:</strong> {dataDomains || <span className="text-gray-400">N/A</span>}</p>
-                <p><strong>Main Domain of Expertise:</strong> {mainDomain || <span className="text-gray-400">N/A</span>}</p>
-              </section>
-              <section className="mb-6">
-                <h2 className="font-semibold text-lg mb-1">3. Contact Information</h2>
-                <p><strong>Contact Email:</strong> {contactEmail || <span className="text-gray-400">N/A</span>}</p>
-                <p><strong>Website:</strong> {website || <span className="text-gray-400">N/A</span>}</p>
               </section>
             </div>
             {submitSuccess && (

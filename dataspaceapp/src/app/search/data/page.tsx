@@ -12,7 +12,7 @@ import {
 } from "@/lib/discovery-search"
 
 function assetMatchesDataSignals(a: AssetRecord, selectedIds: Set<string>, freeText: string) {
-  const blob = `${a.name} ${a.description} ${a.purpose ?? ""} ${a.semanticId ?? ""} ${a.aasId ?? ""} ${a.irdi ?? ""} ${a.semanticModel ?? ""} ${a.dataFormat ?? ""} ${a.assetKind ?? ""} ${a.exchangeMode ?? ""}`.toLowerCase()
+  const blob = `${a.name} ${a.description} ${a.purpose ?? ""} ${a.semanticId ?? ""} ${a.aasId ?? ""} ${a.irdi ?? ""} ${a.semanticModel ?? ""} ${a.dataFormat ?? ""} ${a.assetKind ?? ""} ${a.exchangeMode ?? ""} ${(a.capabilities ?? []).join(" ")} ${(a.capabilitySemantics ?? []).join(" ")}`.toLowerCase()
 
   for (const id of selectedIds) {
     const def = PROCESS_DATA_KEYWORDS.find((k) => k.id === id)

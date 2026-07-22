@@ -42,6 +42,8 @@ export type AssetRecord = {
   dataFormat?: string
   exchangeMode?: ExchangeMode
   accessType?: string
+  capabilities?: string[]
+  capabilitySemantics?: string[]
   createdAt?: Date
 }
 
@@ -98,6 +100,8 @@ export async function fetchAllAssets(): Promise<AssetRecord[]> {
         dataFormat: x.dataFormat != null ? String(x.dataFormat) : undefined,
         exchangeMode: x.exchangeMode != null ? (String(x.exchangeMode) as ExchangeMode) : undefined,
         accessType: x.accessType != null ? String(x.accessType) : undefined,
+        capabilities: Array.isArray(x.capabilities) ? (x.capabilities as string[]) : undefined,
+        capabilitySemantics: Array.isArray(x.capabilitySemantics) ? (x.capabilitySemantics as string[]) : undefined,
         createdAt: x.createdAt?.toDate?.(),
       }
     })
@@ -119,7 +123,7 @@ export const PROCESS_DATA_KEYWORDS: { id: string; label: string; synonyms: strin
   { id: "flow", label: "Flow", synonyms: ["flow", "throughput"] },
   { id: "energy", label: "Energy / power", synonyms: ["energy", "power", "kwh", "consumption"] },
   { id: "humidity", label: "Humidity", synonyms: ["humidity", "moisture"] },
-  { id: "position", label: "Position / geometry", synonyms: ["position", "coordinate", "dimension"] },
+  { id: "position", label: "Position / geometry", synonyms: ["position", "coordinate", "dimension", "axis", "posx", "posy"] },
 ]
 
 /** Operational functions aligned with asset purpose field (monitoring, maintenance, etc.). */

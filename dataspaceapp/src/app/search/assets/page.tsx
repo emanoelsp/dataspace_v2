@@ -46,6 +46,8 @@ export default function SearchAssetsPage() {
         a.assetKind,
         a.dataFormat,
         a.exchangeMode,
+        ...(a.capabilities ?? []),
+        ...(a.capabilitySemantics ?? []),
         a.accessType,
       ]
         .filter(Boolean)

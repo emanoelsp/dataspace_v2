@@ -4,7 +4,6 @@ import {
   sanitizeOptionalText,
   sanitizeOptionalUrl,
   sanitizeText,
-  sanitizeUrl,
 } from "@/lib/dataspace"
 
 export const CONNECTOR_ROLES = ["provider", "consumer", "hybrid"] as const
@@ -72,7 +71,7 @@ export function buildConnectorProfileFields(input: ConnectorProfileRecord) {
     sidecarProtocol: input.sidecarProtocol,
     sidecarEndpoint: sanitizeOptionalText(input.sidecarEndpoint),
     certificateRef: sanitizeOptionalText(input.certificateRef),
-    connectorDspBaseUrl: sanitizeUrl(input.connectorDspBaseUrl),
+    connectorDspBaseUrl: sanitizeOptionalUrl(input.connectorDspBaseUrl),
     connectorManagementBaseUrl: sanitizeOptionalUrl(input.connectorManagementBaseUrl),
     federatedCatalogUrl: sanitizeOptionalUrl(input.federatedCatalogUrl),
     isDefault: Boolean(input.isDefault),
