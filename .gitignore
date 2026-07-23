@@ -6,7 +6,6 @@ playwright-report-remote/
 test-results/
 Artigo ICE/
 Usados Quali/
-api-equipment/
 
 # artefatos de teste/execução (não versionar)
 *.log

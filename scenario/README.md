@@ -1,11 +1,11 @@
 # Cenário plant1 — runbook executável
 
-Materializa o cenário do `api-equipment/fleet/README.md`: **10 CPS, 5 trocas
+Materializa o cenário (a frota vive no repo `dataspace-equipment`): **10 CPS, 5 trocas
 simultâneas via Sidecar PEP**, exercitando os 3 tipos de federação.
 
 ## Pré-requisitos
 
-- Sidecar PEP rodando na LAN (`api-equipment/sidecar-proxy`, porta 3100)
+- Sidecar PEP rodando na LAN (repo `dataspace-sidecar`, porta 3100)
 - CPS rodando (modo multi-máquina: uma app por computador; modo dev: fleet `--port 3050`)
 - Dataspace app com `FIREBASE_SERVICE_ACCOUNT_JSON` e `SIDECAR_ADMIN_SECRET`
 
@@ -47,8 +47,8 @@ isolar o overhead, como no relatório do Cenário 1.
 
 ### 4. Escada de escalabilidade (5 → 500)
 ```bash
-node api-equipment/fleet/server.mjs --port 3050 --scale N
-node api-equipment/fleet/register-fleet.mjs --sidecar ... --base http://<ip>:3050 --scale N
+node <dataspace-equipment>/fleet/server.mjs --port 3050 --scale N
+node <dataspace-equipment>/fleet/register-fleet.mjs --sidecar ... --base http://<ip>:3050 --scale N
 # provisionar tokens em lote e repetir a carga com mais trocas
 ```
 

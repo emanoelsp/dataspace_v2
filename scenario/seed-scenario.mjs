@@ -2,7 +2,7 @@
 /**
  * Seed do CENÁRIO plant1 — cria as 3 federações, os ativos dos 10 CPS e as
  * políticas de governança no Firestore, conforme a tabela do cenário
- * (api-equipment/fleet/README.md).
+ * (repo dataspace-equipment: fleet/README.md).
  *
  * Requisitos:
  *   - FIREBASE_SERVICE_ACCOUNT_JSON no ambiente (o mesmo do dataspaceapp)
