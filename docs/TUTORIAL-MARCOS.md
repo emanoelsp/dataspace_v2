@@ -1,18 +1,46 @@
 # Tutorial — Integrando a arquitetura de controle ao Dataspace (M2M)
 
 Este guia é para o **Marcos** testar a integração da arquitetura de controle
-(CPS plug-and-play) com o **Dataspace** do Emanoel, que roda na nuvem (Vercel).
+(CPS plug-and-play) com o **Dataspace** do Emanoel.
 
-O Dataspace é o **plano de controle**: catálogo (UDDI), governança e emissão de
-tokens. Os **CPS e o Sidecar PEP** rodam na **tua** rede. O dado nunca passa pela
-nuvem — só o token é negociado lá; a troca é P2P local, via Sidecar.
+## Arquitetura em dois planos
+
+A proposta separa **quem decide o acesso** de **onde o dado trafega** — a ideia
+central da dissertação (soberania na origem + baixa latência).
+
+**🌐 Plano de controle — Dataspace na nuvem (Vercel)**
+É a "autoridade" do ecossistema. Cuida de *quem pode acessar o quê e sob quais
+regras*, **sem nunca tocar no dado**:
+- catálogo/descoberta de serviços (UDDI) e federações;
+- negociação de contratos e **emissão dos tokens** de acesso;
+- governança (TTL, finalidade, revogação) e registro dos contratos.
+
+**🏭 Plano de dados — Sidecar PEP na rede local**
+É o **PEP (Policy Enforcement Point)** que roda na **tua** rede, colado nos CPS.
+Cuida da *troca real do dado, sob o controle do token*:
+- recebe o token que a nuvem emitiu e o mantém localmente (**controle de token**);
+- a cada requisição, **valida o token** (assinatura, TTL, escopo, governança
+  herdada) e só então faz o **proxy P2P** ao CPS na LAN;
+- registra os logs de acesso (rastreabilidade).
+
+O dado **nunca sobe para a nuvem** — só o token é negociado lá. Se a conexão com
+a nuvem cair, o Sidecar continua validando e servindo com o token local até o TTL
+expirar.
 
 ```
-teu CPS  ──(dados)──►  Sidecar PEP (tua rede)  ◄──(token)──  Dataspace (Vercel)
-                              ▲                                     ▲
-                              └────── teu agente consome ──────────┘
-                     (register / discover / negotiate acontecem na nuvem)
+   PLANO DE CONTROLE (nuvem / Vercel)              PLANO DE DADOS (tua rede local)
+ ┌───────────────────────────────────┐          ┌──────────────────────────────────┐
+ │  Dataspace                        │  token   │  Sidecar PEP                     │
+ │  catálogo · contratos · governança├─────────►│  valida token · aplica política  │
+ │  emite o token (não vê o dado)    │  (HTTPS) │  proxy P2P · logs                │
+ └───────────────────────────────────┘          └───────────────┬──────────────────┘
+        ▲ register / discover / negotiate                        │ dados (LAN, P2P)
+        │                                                        ▼
+   agente / arquitetura de controle  ───────(consome via PEP)──►  CPS
 ```
+
+Resumo do fluxo: você **descobre e negocia** no plano de controle (nuvem) e
+**consome** no plano de dados (teu Sidecar) — o token é a ponte entre os dois.
 
 ---
 
