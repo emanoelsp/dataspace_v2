@@ -168,6 +168,8 @@ function CreateAssetPageInner() {
   const [apiTestResult, setApiTestResult] = useState<string | null>(null)
   const [isTestingApi, setIsTestingApi] = useState(false)
   const [showToast, setShowToast] = useState(false)
+  const [isFetchingAas, setIsFetchingAas] = useState(false)
+  const [aasFetchStatus, setAasFetchStatus] = useState<"idle" | "success" | "failed">("idle")
 
   // Fetch federations
   useEffect(() => {
@@ -223,11 +225,43 @@ function CreateAssetPageInner() {
   const isStep3Valid = () =>
     apiEndpoint.trim() !== "" && dataFormat.trim() !== "" && exchangeMode.trim() !== ""
 
+  // Fetch AAS ID and IRDI from the equipment API endpoint
+  const fetchAasMetadata = async () => {
+    setIsFetchingAas(true)
+    setAasFetchStatus("idle")
+    try {
+      const baseUrl = apiEndpoint.replace(/\/api\/(data|aas)\/?.*$/i, "")
+      const auth = { headers: { Authorization: "Bearer demo" } }
+      const [dataRes, aasRes] = await Promise.all([
+        fetch(`${baseUrl}/api/data`, auth).catch(() => null),
+        fetch(`${baseUrl}/api/aas`, auth).catch(() => null),
+      ])
+      let found = false
+      if (dataRes?.ok) {
+        const d = await dataRes.json()
+        if (typeof d?.eclassIrdi === "string" && d.eclassIrdi) { setIrdi(d.eclassIrdi); found = true }
+      }
+      if (aasRes?.ok) {
+        const env = await aasRes.json()
+        const id = env?.assetAdministrationShells?.[0]?.id
+        if (id) { setAasId(id); found = true }
+      }
+      setAasFetchStatus(found ? "success" : "failed")
+    } catch {
+      setAasFetchStatus("failed")
+    } finally {
+      setIsFetchingAas(false)
+    }
+  }
+
   // Navegação
-  const handleNext = () => {
+  const handleNext = async () => {
     if (step === 1 && isStep1Valid()) setStep(2)
     else if (step === 2 && isStep2Valid()) setStep(3)
-    else if (step === 3 && isStep3Valid()) setStep(4)
+    else if (step === 3 && isStep3Valid()) {
+      await fetchAasMetadata()
+      setStep(4)
+    }
   }
   const handleBack = () => {
     if (step > 1) setStep(step - 1)
@@ -506,26 +540,6 @@ function CreateAssetPageInner() {
                 </select>
               </div>
               
-              <div>
-                <label className="block text-sm font-medium text-gray-700 mb-1">AAS ID</label>
-                <input
-                  value={aasId}
-                  onChange={(e) => setAasId(e.target.value)}
-                  placeholder="e.g. urn:aas:shopfloor:cell-01:cps-07"
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
-              <div>
-                <label htmlFor="asset-irdi" className="block text-sm font-medium text-gray-700 mb-1">IRDI / ECLASS reference</label>
-                <input
-                  id="asset-irdi"
-                  value={irdi}
-                  onChange={(e) => setIrdi(e.target.value)}
-                  placeholder="e.g. 0173-1#02-BAA120#007"
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
-                />
-              </div>
-              
             </div>
             <div className="mt-6 flex justify-between">
               <button
@@ -578,7 +592,7 @@ function CreateAssetPageInner() {
                   className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
                 />
                 <p className="text-xs text-gray-500 mt-1">
-                  Identificador do CPS no Sidecar PEP (/api/proxy/&#123;id&#125;/data). Se vazio, é derivado do nome do ativo.
+                  CPS identifier in the Sidecar PEP (/api/proxy/&#123;id&#125;/data). If empty, derived from the asset name.
                 </p>
               </div>
               <div>
@@ -656,10 +670,10 @@ function CreateAssetPageInner() {
               <button
                 type="button"
                 onClick={handleNext}
-                disabled={!isStep3Valid()}
+                disabled={!isStep3Valid() || isFetchingAas}
                 className="bg-blue-600 hover:bg-blue-700 text-white font-semibold px-6 py-3 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                Next: Review & Register
+                {isFetchingAas ? "Fetching from API..." : "Next: Review & Register"}
               </button>
             </div>
           </>
@@ -691,8 +705,37 @@ function CreateAssetPageInner() {
                 <p><strong>Asset Kind:</strong> {assetKind || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Purpose of Operation:</strong> {purpose || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Semantic ID:</strong> {semanticId || <span className="text-gray-400">N/A</span>}</p>
-                <p><strong>AAS ID:</strong> {aasId || <span className="text-gray-400">N/A</span>}</p>
-                <p><strong>IRDI / ECLASS:</strong> {irdi || <span className="text-gray-400">N/A</span>}</p>
+                {aasFetchStatus === "success" ? (
+                  <div className="mt-2 rounded-md border border-green-200 bg-green-50 p-3 text-sm">
+                    <p className="text-xs font-semibold text-green-700 mb-1">✅ Retrieved from API</p>
+                    <p><strong>AAS ID:</strong> {aasId || <span className="text-gray-400">Not found</span>}</p>
+                    <p><strong>IRDI / ECLASS:</strong> {irdi || <span className="text-gray-400">Not found</span>}</p>
+                  </div>
+                ) : aasFetchStatus === "failed" ? (
+                  <div className="mt-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm">
+                    <p className="text-xs font-semibold text-amber-700 mb-2">⚠️ Could not retrieve from API — fill in manually if available</p>
+                    <div className="space-y-2">
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">AAS ID</label>
+                        <input
+                          value={aasId}
+                          onChange={(e) => setAasId(e.target.value)}
+                          placeholder="e.g. urn:dataspace:plant1:equipment:cnc:001"
+                          className="border border-gray-300 p-2 w-full rounded-md text-sm"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-xs text-gray-600 mb-1">IRDI / ECLASS</label>
+                        <input
+                          value={irdi}
+                          onChange={(e) => setIrdi(e.target.value)}
+                          placeholder="e.g. 0173-1#01-ACJ843#001"
+                          className="border border-gray-300 p-2 w-full rounded-md text-sm"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
                 <p><strong>Semantic Model:</strong> {semanticModel || <span className="text-gray-400">N/A</span>}</p>
               </section>
               <section className="mb-6">
@@ -773,7 +816,7 @@ function CreateAssetPageInner() {
         </div>
 
         <div className="mt-8 p-4 bg-blue-50 border-l-4 border-blue-500 text-blue-700 text-sm rounded-md">
-          <strong>Note:</strong> All fields marked with * are required. The information you provide will be visible to potential users and integrators in the dataspace. Para CPS/Indústria Avançada, detalhe bem o tipo, formato, propósito e regras de acesso do ativo.
+          <strong>Note:</strong> All fields marked with * are required. The information you provide will be visible to potential users and integrators in the dataspace. For CPS/Advanced Industry assets, provide detailed type, format, purpose, and access rules.
         </div>
       </div>
     </>
@@ -783,7 +826,7 @@ function CreateAssetPageInner() {
 // Exporta o componente com Suspense para uso correto do useSearchParams
 export default function CreateAssetPage() {
   return (
-    <Suspense fallback={<div className="p-8 text-gray-600">Carregando...</div>}>
+    <Suspense fallback={<div className="p-8 text-gray-600">Loading...</div>}>
       <CreateAssetPageInner />
     </Suspense>
   )
