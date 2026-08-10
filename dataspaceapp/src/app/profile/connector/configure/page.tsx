@@ -276,11 +276,11 @@ export default function ConfigureConnectorPage() {
       </div>
 
       <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50/70 p-5 text-sm text-blue-900">
-        <p className="font-semibold text-blue-950">Conector intraorganizacional</p>
+        <p className="font-semibold text-blue-950">Intra-organizational connector</p>
         <p className="mt-2">
-          O conector identifica o participante no plano de controle e aponta para o <b>Sidecar PEP</b> da
-          fábrica — é por ele que os CPS são registrados e os tokens entregues. Identidade avançada
-          (certificados/DAPS/SSI) e URLs de protocolo DSP pertencem à evolução interorganizacional.
+          The connector identifies the participant in the control plane and points to the factory&apos;s <b>Sidecar PEP</b> —
+          through it, CPS assets are registered and access tokens delivered. Advanced identity
+          (certificates/DAPS/SSI) and DSP protocol URLs belong to the inter-organizational evolution.
         </p>
       </div>
 
@@ -326,17 +326,24 @@ export default function ConfigureConnectorPage() {
         <div className="grid gap-4 md:grid-cols-2">
           <div>
             <label className="block text-sm font-medium text-gray-700">Connector role *</label>
-            <select
-              value={form.connectorRole}
-              onChange={(event) => setField("connectorRole", event.target.value as typeof form.connectorRole)}
-              className="mt-1 block w-full rounded-md border border-gray-300 p-2 shadow-sm"
-            >
-              {CONNECTOR_ROLES.map((value) => (
-                <option key={value} value={value}>
-                  {value === "provider" ? "Provider" : value === "consumer" ? "Consumer" : "Hybrid"}
-                </option>
-              ))}
-            </select>
+            <div className="relative mt-1">
+              <select
+                value={form.connectorRole}
+                onChange={(event) => setField("connectorRole", event.target.value as typeof form.connectorRole)}
+                className="block w-full appearance-none rounded-md border border-gray-300 bg-white p-2 pr-8 shadow-sm"
+              >
+                {CONNECTOR_ROLES.map((value) => (
+                  <option key={value} value={value}>
+                    {value === "provider" ? "Provider" : value === "consumer" ? "Consumer" : "Hybrid"}
+                  </option>
+                ))}
+              </select>
+              <span className="pointer-events-none absolute inset-y-0 right-2 flex items-center text-gray-400">
+                <svg className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                  <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 011.06.02L10 11.168l3.71-3.938a.75.75 0 111.08 1.04l-4.25 4.5a.75.75 0 01-1.08 0l-4.25-4.5a.75.75 0 01.02-1.06z" clipRule="evenodd" />
+                </svg>
+              </span>
+            </div>
           </div>
           <div>
             <label htmlFor="connector-participant-id" className="block text-sm font-medium text-gray-700">Participant ID (auto se vazio)</label>
@@ -365,8 +372,8 @@ export default function ConfigureConnectorPage() {
             required={form.connectorRole !== "consumer"}
           />
           <p className="mt-1 text-xs text-gray-500">
-            URL do Sidecar PEP na rede da fábrica. Os CPS deste conector serão registrados nele e os
-            tokens de acesso entregues a ele.
+            URL of the Sidecar PEP on the factory network. The CPS of this connector will be registered
+            there and access tokens delivered to it.
           </p>
         </div>
 
