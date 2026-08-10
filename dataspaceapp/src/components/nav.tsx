@@ -116,6 +116,7 @@ const MENUS: Record<string, MenuType> = {
         description: "View your data assets and stream real-time API data from any endpoint",
         basePath: "/access/my-assets",
         options: [
+          { label: "Register New Asset", href: "/assets/create" },
           { label: "Open My Assets", href: "/access/my-assets" },
         ],
       },
@@ -167,6 +168,7 @@ const MENUS: Record<string, MenuType> = {
         description: "Access approved assets and stream real-time API data from their endpoints",
         basePath: "/access/my-assets",
         options: [
+          { label: "Register New Asset", href: "/assets/create" },
           { label: "Open My Assets", href: "/access/my-assets" },
         ],
       },
