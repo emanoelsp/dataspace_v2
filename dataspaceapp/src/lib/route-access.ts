@@ -12,9 +12,6 @@ const ROUTE_POLICIES: RoutePolicy[] = [
   {
     access: "datasource",
     exact: [
-      "/assets",
-      "/assets/browse",
-      "/assets/create",
       "/federations",
       "/federations/browse",
       "/federations/create",
@@ -34,7 +31,17 @@ const ROUTE_POLICIES: RoutePolicy[] = [
   },
   {
     access: "authenticated",
-    exact: ["/dashboard", "/dashboard/sidecar", "/profile", "/profile/connector", "/profile/connector/configure", "/search"],
+    exact: [
+      "/assets",
+      "/assets/browse",
+      "/assets/create",
+      "/dashboard",
+      "/dashboard/sidecar",
+      "/profile",
+      "/profile/connector",
+      "/profile/connector/configure",
+      "/search",
+    ],
     prefixes: ["/assets/", "/federations/", "/search/"],
   },
 ]
