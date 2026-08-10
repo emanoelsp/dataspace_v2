@@ -106,6 +106,16 @@ type ConnectorOwnerProfile = {
     federatedCatalogUrl?: string
 }
 
+type FederationAsset = {
+    id: string
+    name: string
+    description?: string
+    assetType?: string
+    purpose?: string
+    accessType?: string
+    dataFormat?: string
+}
+
 export default function FederationDetailsPage() {
     const { user, profile } = useUserProfile()
     const params = useParams()
@@ -138,6 +148,8 @@ export default function FederationDetailsPage() {
     const [currentInvite, setCurrentInvite] = useState<FederationInvite | null>(null)
     const [federationInvites, setFederationInvites] = useState<FederationInvite[]>([])
     const [membershipsVersion, setMembershipsVersion] = useState(0)
+    const [federationAssets, setFederationAssets] = useState<FederationAsset[]>([])
+    const [federationAssetsLoading, setFederationAssetsLoading] = useState(false)
 
     useEffect(() => {
         const fetchFederation = async () => {
@@ -383,6 +395,37 @@ export default function FederationDetailsPage() {
 
         loadFederationAccessState()
     }, [federation?.id, federation?.ownerId, user, canManageFederation, membershipsVersion])
+
+    useEffect(() => {
+        const loadFederationAssets = async () => {
+            if (!federation?.id || currentMembership?.status !== "active" || !canRequestMembership) {
+                setFederationAssets([])
+                return
+            }
+            try {
+                setFederationAssetsLoading(true)
+                const assetsSnapshot = await getDocs(
+                    query(collection(db, "assets"), where("federationId", "==", federation.id))
+                )
+                setFederationAssets(
+                    assetsSnapshot.docs.map((d) => ({
+                        id: d.id,
+                        name: d.data().name,
+                        description: d.data().description,
+                        assetType: d.data().assetType,
+                        purpose: d.data().purpose,
+                        accessType: d.data().accessType,
+                        dataFormat: d.data().dataFormat,
+                    }))
+                )
+            } catch (err) {
+                console.error("Error loading federation assets:", err)
+            } finally {
+                setFederationAssetsLoading(false)
+            }
+        }
+        loadFederationAssets()
+    }, [federation?.id, currentMembership?.status, canRequestMembership])
 
     const handleEdit = () => {
         if (!canManageFederation) return
@@ -681,7 +724,7 @@ export default function FederationDetailsPage() {
             setMembershipTermsAccepted(false)
             setMembershipMessage(
                 autoApprove
-                    ? "Federation membership activated and membership credential issued. You can now move to asset agreements."
+                    ? "Federation membership activated. Scroll down to browse available assets and sign a data access contract."
                     : "Membership request submitted. Wait for Data Owner approval.",
             )
             setMembershipsVersion((value) => value + 1)
@@ -1456,6 +1499,51 @@ export default function FederationDetailsPage() {
                             )}
                             </div>
                         </section>
+                    </div>
+                </div>
+            )}
+
+            {/* Federation Assets — visible to data clients with active membership */}
+            {!isEditing && canRequestMembership && currentMembership?.status === "active" && (
+                <div className="mb-8">
+                    <h2 className="text-2xl font-bold text-gray-800 mb-6">Assets Available in this Federation</h2>
+                    <div className="rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+                        <p className="text-gray-600 mb-6">
+                            You are an active member of this federation. Select an asset below to negotiate a data access contract.
+                        </p>
+                        {federationAssetsLoading ? (
+                            <p className="text-sm text-gray-500">Loading assets...</p>
+                        ) : federationAssets.length === 0 ? (
+                            <p className="text-sm text-gray-500">No assets registered for this federation yet.</p>
+                        ) : (
+                            <div className="grid gap-4 sm:grid-cols-2">
+                                {federationAssets.map((asset) => (
+                                    <div key={asset.id} className="rounded-xl border border-gray-200 bg-gray-50 p-5 flex flex-col">
+                                        <p className="font-semibold text-gray-900">{asset.name}</p>
+                                        {asset.assetType ? (
+                                            <p className="mt-1 text-xs text-gray-500 uppercase tracking-wide">{asset.assetType}</p>
+                                        ) : null}
+                                        {asset.purpose ? (
+                                            <p className="mt-2 text-sm text-gray-700 line-clamp-2">{asset.purpose}</p>
+                                        ) : null}
+                                        <div className="mt-3 flex flex-wrap gap-2">
+                                            {asset.accessType ? (
+                                                <span className="rounded-full bg-blue-50 px-2.5 py-0.5 text-xs font-medium text-blue-700">{asset.accessType}</span>
+                                            ) : null}
+                                            {asset.dataFormat ? (
+                                                <span className="rounded-full bg-gray-200 px-2.5 py-0.5 text-xs font-medium text-gray-700">{asset.dataFormat}</span>
+                                            ) : null}
+                                        </div>
+                                        <Link
+                                            href={`/assets/${asset.id}`}
+                                            className="mt-4 inline-block self-start rounded-lg bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-700"
+                                        >
+                                            Request contract agreement →
+                                        </Link>
+                                    </div>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}
