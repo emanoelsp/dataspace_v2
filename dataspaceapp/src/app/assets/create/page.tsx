@@ -155,7 +155,8 @@ function CreateAssetPageInner() {
   const [irdi, setIrdi] = useState("")
   const [semanticModel] = useState("AAS / IEC 63278")
 
-  const [apiEndpoint, setApiEndpoint] = useState("")
+  const [aasEndpoint, setAasEndpoint] = useState("")
+  const [dataEndpoint, setDataEndpoint] = useState("")
   const [equipmentSlug, setEquipmentSlug] = useState("")
   const [dataFormat, setDataFormat] = useState("JSON")
   const [exchangeMode, setExchangeMode] = useState("stream")
@@ -223,18 +224,17 @@ function CreateAssetPageInner() {
   const isStep2Valid = () =>
     name.trim() !== "" && description.trim() !== "" && assetType.trim() !== ""
   const isStep3Valid = () =>
-    apiEndpoint.trim() !== "" && dataFormat.trim() !== "" && exchangeMode.trim() !== ""
+    aasEndpoint.trim() !== "" && dataEndpoint.trim() !== "" && dataFormat.trim() !== "" && exchangeMode.trim() !== ""
 
-  // Fetch AAS ID and IRDI from the equipment API endpoint
+  // Fetch AAS ID and IRDI directly from the two typed endpoints
   const fetchAasMetadata = async () => {
     setIsFetchingAas(true)
     setAasFetchStatus("idle")
     try {
-      const baseUrl = apiEndpoint.replace(/\/api\/(data|aas)\/?.*$/i, "")
       const auth = { headers: { Authorization: "Bearer demo" } }
       const [dataRes, aasRes] = await Promise.all([
-        fetch(`${baseUrl}/api/data`, auth).catch(() => null),
-        fetch(`${baseUrl}/api/aas`, auth).catch(() => null),
+        fetch(dataEndpoint, auth).catch(() => null),
+        fetch(aasEndpoint, auth).catch(() => null),
       ])
       let found = false
       if (dataRes?.ok) {
@@ -267,18 +267,18 @@ function CreateAssetPageInner() {
     if (step > 1) setStep(step - 1)
   }
 
-  // Teste de API
+  // Teste de API — testa o data endpoint
   const handleApiTest = async () => {
-    if (!apiEndpoint) {
-      setApiTestResult("Please enter an API Endpoint to test.")
+    if (!dataEndpoint) {
+      setApiTestResult("Please enter the Data Endpoint to test.")
       return
     }
     setIsTestingApi(true)
     setApiTestResult(null)
     try {
-      const response = await fetch(apiEndpoint, {
+      const response = await fetch(dataEndpoint, {
         method: "GET",
-        headers: { Accept: "application/json, text/plain, */*" },
+        headers: { Accept: "application/json, text/plain, */*", Authorization: "Bearer demo" },
         mode: "cors",
       })
       const contentType = response.headers.get("content-type")
@@ -321,10 +321,11 @@ function CreateAssetPageInner() {
       return
     }
 
-    const normalizedApiEndpoint = sanitizeUrl(apiEndpoint)
+    const normalizedDataEndpoint = sanitizeUrl(dataEndpoint)
+    const normalizedAasEndpoint = sanitizeUrl(aasEndpoint)
 
-    if (!normalizedApiEndpoint) {
-      setErrorMessage("Provide a valid API endpoint URL.")
+    if (!normalizedDataEndpoint || !normalizedAasEndpoint) {
+      setErrorMessage("Provide valid URLs for both AAS and Data endpoints.")
       return
     }
 
@@ -333,31 +334,23 @@ function CreateAssetPageInner() {
     try {
       const selectedFederation = federations.find((federation) => federation.id === federationId)
       const finalEquipmentSlug = equipmentSlug || slugifyEquipment(name)
-      const baseUrl =
-        normalizedApiEndpoint.replace(/\/api\/(data|aas)\/?$/i, "") ||
-        new URL(normalizedApiEndpoint).origin
+      const baseUrl = normalizedDataEndpoint.replace(/\/api\/data\/?.*$/i, "")
 
-      // ── Colheita de capacidades do CPS (UDDI: descoberta por funcionalidade) ──
-      // Lê /api/data e o submodelo OperationalData do AAS para indexar no
-      // catálogo QUAIS variáveis o ativo expõe e seus identificadores semânticos.
+      // Harvest capabilities from the data and AAS endpoints for catalog indexing
       let capabilities: string[] = []
       let capabilitySemantics: string[] = []
-      let harvestedAasId = ""
-      let harvestedIrdi = ""
       try {
         const authHeaders = { headers: { Authorization: "Bearer demo" } }
         const [dataRes, aasRes] = await Promise.all([
-          fetch(`${baseUrl}/api/data`, authHeaders),
-          fetch(`${baseUrl}/api/aas?submodel=OperationalData`, authHeaders),
+          fetch(normalizedDataEndpoint, authHeaders),
+          fetch(`${normalizedAasEndpoint}?submodel=OperationalData`, authHeaders),
         ])
         if (dataRes.ok) {
           const d = await dataRes.json()
           capabilities = Object.keys(d?.metrics ?? {}).slice(0, 64)
-          if (typeof d?.eclassIrdi === "string") harvestedIrdi = d.eclassIrdi
         }
         if (aasRes.ok) {
           const env = await aasRes.json()
-          harvestedAasId = env?.assetAdministrationShells?.[0]?.id ?? ""
           const collect = (els: Array<{ semanticId?: { keys?: Array<{ value?: string }> }; submodelElements?: unknown[] }>) => {
             for (const el of els ?? []) {
               const sem = el?.semanticId?.keys?.[0]?.value
@@ -368,7 +361,7 @@ function CreateAssetPageInner() {
           for (const sm of env?.submodels ?? []) collect(sm?.submodelElements ?? [])
           capabilitySemantics = Array.from(new Set(capabilitySemantics)).slice(0, 96)
         }
-      } catch { /* CPS inacessível no registro — catálogo fica sem capacidades (pode ressalvar depois) */ }
+      } catch { /* unreachable CPS — catalog stored without capabilities, can be refreshed later */ }
 
       await addDoc(collection(db, "assets"), {
         name: sanitizeText(name),
@@ -392,10 +385,12 @@ function CreateAssetPageInner() {
         assetKind: sanitizeText(assetKind),
         purpose: sanitizeText(purpose),
         semanticId: sanitizeOptionalText(semanticId),
-        aasId: sanitizeOptionalText(aasId) || harvestedAasId,
-        irdi: sanitizeOptionalText(irdi) || harvestedIrdi,
+        aasId: sanitizeOptionalText(aasId),
+        irdi: sanitizeOptionalText(irdi),
         semanticModel: sanitizeOptionalText(semanticModel),
-        apiEndpoint: normalizedApiEndpoint,
+        aasEndpoint: normalizedAasEndpoint,
+        dataEndpoint: normalizedDataEndpoint,
+        apiEndpoint: normalizedDataEndpoint,
         dataFormat: sanitizeText(dataFormat),
         exchangeMode: sanitizeText(exchangeMode),
         accessType: sanitizeOptionalText(accessType),
@@ -406,8 +401,8 @@ function CreateAssetPageInner() {
         ...buildOwnershipFields(user),
       })
 
-      // Registra o CPS no Sidecar PEP: o sidecar passa a conhecer o equipamento
-      // (rota, nome, classe ECLASS e dono) sem depender de lista estática.
+      // Register the CPS with the federation's Sidecar PEP so it can proxy
+      // requests to this equipment using the connector's known sidecar URL.
       try {
         await fetch("/api/sidecar/register-equipment", {
           method: "POST",
@@ -418,6 +413,8 @@ function CreateAssetPageInner() {
             id: finalEquipmentSlug,
             name: sanitizeText(name),
             baseUrl,
+            aasEndpoint: normalizedAasEndpoint,
+            dataEndpoint: normalizedDataEndpoint,
             eclassIrdi: sanitizeOptionalText(irdi) || undefined,
             connectorId: sanitizeOptionalText(selectedFederation?.connectorProfileId ?? "") || undefined,
             dataOwnerId: user.uid,
@@ -425,7 +422,7 @@ function CreateAssetPageInner() {
           }),
         })
       } catch {
-        // registro no sidecar é best-effort: o ativo permanece válido no catálogo
+        // sidecar registration is best-effort: asset remains valid in the catalog
       }
 
       setSubmitSuccess(true)
@@ -572,15 +569,28 @@ function CreateAssetPageInner() {
             </p>
             <div className="space-y-4">
               <div>
-                <label htmlFor="asset-api-endpoint" className="block text-sm font-medium text-gray-700 mb-1">API Endpoint *</label>
+                <label htmlFor="asset-aas-endpoint" className="block text-sm font-medium text-gray-700 mb-1">AAS Endpoint *</label>
                 <input
-                  id="asset-api-endpoint"
-                  value={apiEndpoint}
-                  onChange={(e) => setApiEndpoint(e.target.value)}
-                  placeholder="e.g. https://api.example.com/data"
+                  id="asset-aas-endpoint"
+                  value={aasEndpoint}
+                  onChange={(e) => setAasEndpoint(e.target.value)}
+                  placeholder="e.g. http://192.168.0.82:3001/api/aas"
                   required
-                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600"
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600 font-mono text-sm"
                 />
+                <p className="text-xs text-gray-500 mt-1">Asset Administration Shell endpoint (IDTA-01001-3-0).</p>
+              </div>
+              <div>
+                <label htmlFor="asset-data-endpoint" className="block text-sm font-medium text-gray-700 mb-1">Data Endpoint *</label>
+                <input
+                  id="asset-data-endpoint"
+                  value={dataEndpoint}
+                  onChange={(e) => setDataEndpoint(e.target.value)}
+                  placeholder="e.g. http://192.168.0.82:3001/api/data"
+                  required
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600 font-mono text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">Real-time operational data endpoint.</p>
               </div>
               <div>
                 <label htmlFor="asset-equipment-slug" className="block text-sm font-medium text-gray-700 mb-1">Equipment ID (Sidecar route)</label>
@@ -634,7 +644,7 @@ function CreateAssetPageInner() {
                 <button
                   type="button"
                   onClick={handleApiTest}
-                  disabled={!apiEndpoint || isTestingApi}
+                  disabled={!dataEndpoint || isTestingApi}
                   className="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {isTestingApi ? (
@@ -740,7 +750,8 @@ function CreateAssetPageInner() {
               </section>
               <section className="mb-6">
                 <h2 className="font-semibold text-lg mb-1">3. Technical Info</h2>
-                <p><strong>API Endpoint:</strong> {apiEndpoint || <span className="text-gray-400">N/A</span>}</p>
+                <p><strong>AAS Endpoint:</strong> {aasEndpoint || <span className="text-gray-400">N/A</span>}</p>
+                <p><strong>Data Endpoint:</strong> {dataEndpoint || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Data Format:</strong> {dataFormat || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Exchange Mode:</strong> {exchangeMode || <span className="text-gray-400">N/A</span>}</p>
                 <p><strong>Access Type:</strong> {accessType || <span className="text-gray-400">N/A</span>}</p>
