@@ -8,7 +8,7 @@ import { db } from "@/lib/firebase"
 import { CheckCircle, Layers, Box, Code, FileText, ChevronLeft, X } from "lucide-react"
 import { buildOwnershipFields, sanitizeMultilineText, sanitizeOptionalText, sanitizeText, sanitizeUrl } from "@/lib/dataspace"
 import { EXCHANGE_MODES } from "@/lib/intra-dataspace"
-import { useAuthUser } from "@/lib/use-auth-user"
+import { useUserProfile } from "@/lib/use-user-profile"
 
 const steps = [
   { id: 1, title: "Choose Federation", icon: Layers },
@@ -134,7 +134,7 @@ function slugifyEquipment(value: string): string {
 }
 
 function CreateAssetPageInner() {
-  const { user, loading: authLoading } = useAuthUser()
+  const { user, profile, loading: authLoading } = useUserProfile()
   const searchParams = useSearchParams()
   const initialFederationId = searchParams?.get("federationId") || ""
   const initialFederationName = searchParams?.get("federationName") || ""
@@ -357,16 +357,18 @@ function CreateAssetPageInner() {
         capabilitySemantics,
         federationId,
         federationName: sanitizeText(federationName),
-        connectorProfileId: sanitizeOptionalText(selectedFederation?.connectorProfileId ?? ""),
-        connectorName: sanitizeOptionalText(selectedFederation?.connectorName ?? ""),
-        connectorParticipantId: sanitizeOptionalText(selectedFederation?.participantId ?? ""),
-        connectorDspBaseUrl: sanitizeOptionalText(selectedFederation?.connectorDspBaseUrl ?? ""),
-        connectorManagementBaseUrl: sanitizeOptionalText(selectedFederation?.connectorManagementBaseUrl ?? ""),
-        federatedCatalogUrl: sanitizeOptionalText(selectedFederation?.federatedCatalogUrl ?? ""),
-        connectorScopeType: sanitizeOptionalText(selectedFederation?.connectorScopeType ?? ""),
-        connectorScopeLabel: sanitizeOptionalText(selectedFederation?.connectorScopeLabel ?? ""),
-        sidecarProtocol: sanitizeOptionalText(selectedFederation?.sidecarProtocol ?? ""),
-        sidecarEndpoint: sanitizeOptionalText(selectedFederation?.sidecarEndpoint ?? ""),
+        // Connector identity comes from the registering user's own profile so that
+        // both data owners and data clients record their own DSP endpoint, not the
+        // federation owner's endpoint. Sidecar is inherited from the federation
+        // because it is shared infrastructure for all federation participants.
+        connectorParticipantId: sanitizeOptionalText(profile?.participantId ?? selectedFederation?.participantId ?? ""),
+        connectorDspBaseUrl: sanitizeOptionalText(profile?.connectorDspBaseUrl ?? selectedFederation?.connectorDspBaseUrl ?? ""),
+        connectorManagementBaseUrl: sanitizeOptionalText(profile?.connectorManagementBaseUrl ?? selectedFederation?.connectorManagementBaseUrl ?? ""),
+        federatedCatalogUrl: sanitizeOptionalText(profile?.federatedCatalogUrl ?? selectedFederation?.federatedCatalogUrl ?? ""),
+        connectorScopeType: sanitizeOptionalText(profile?.connectorScopeType ?? selectedFederation?.connectorScopeType ?? ""),
+        connectorScopeLabel: sanitizeOptionalText(profile?.connectorScopeLabel ?? selectedFederation?.connectorScopeLabel ?? ""),
+        sidecarProtocol: sanitizeOptionalText(profile?.sidecarProtocol ?? selectedFederation?.sidecarProtocol ?? ""),
+        sidecarEndpoint: sanitizeOptionalText(profile?.sidecarEndpoint ?? selectedFederation?.sidecarEndpoint ?? ""),
         description: sanitizeMultilineText(description),
         assetType: sanitizeText(assetType),
         assetKind: sanitizeText(assetKind),
