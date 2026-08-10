@@ -157,6 +157,7 @@ function CreateAssetPageInner() {
 
   const [aasEndpoint, setAasEndpoint] = useState("")
   const [dataEndpoint, setDataEndpoint] = useState("")
+  const [healthEndpoint, setHealthEndpoint] = useState("")
   const [equipmentSlug, setEquipmentSlug] = useState("")
   const [dataFormat, setDataFormat] = useState("JSON")
   const [exchangeMode, setExchangeMode] = useState("stream")
@@ -267,43 +268,29 @@ function CreateAssetPageInner() {
     if (step > 1) setStep(step - 1)
   }
 
-  // Teste de API — testa o data endpoint
+  // Server-side probe — avoids browser CORS; tests the health endpoint
   const handleApiTest = async () => {
-    if (!dataEndpoint) {
-      setApiTestResult("Please enter the Data Endpoint to test.")
+    if (!healthEndpoint) {
+      setApiTestResult("Please enter the Health Endpoint before testing.")
       return
     }
     setIsTestingApi(true)
     setApiTestResult(null)
     try {
-      const response = await fetch(dataEndpoint, {
-        method: "GET",
-        headers: { Accept: "application/json, text/plain, */*", Authorization: "Bearer demo" },
-        mode: "cors",
-      })
-      const contentType = response.headers.get("content-type")
-      let responseText = ""
-      if (contentType && contentType.includes("application/json")) {
-        try {
-          responseText = JSON.stringify(await response.json(), null, 2)
-        } catch {
-          responseText = await response.text()
-        }
-      } else {
-        responseText = await response.text()
-      }
-      if (response.ok) {
-        setApiTestResult(
-          `✅ Test successful! Status: ${response.status}. Content-Type: ${contentType || "unknown"}. Response: ${responseText.substring(0, 300)}${responseText.length > 300 ? "..." : ""}`,
-        )
+      const res = await fetch(`/api/probe?url=${encodeURIComponent(healthEndpoint)}`)
+      const result = await res.json()
+      if (result.ok) {
+        const summary = result.body
+          ? JSON.stringify(result.body).slice(0, 200)
+          : `HTTP ${result.status}`
+        setApiTestResult(`✅ Online — ${result.responseTimeMs} ms · ${summary}`)
       } else {
         setApiTestResult(
-          `❌ Test failed! Status: ${response.status} ${response.statusText}. Response: ${responseText.substring(0, 200)}${responseText.length > 200 ? "..." : ""}`,
+          `❌ Unreachable — ${result.error ?? `HTTP ${result.status} ${result.statusText}`}`
         )
       }
-    } catch (error) {
-      const err = error as Error
-      setApiTestResult(`❌ Error: ${err.message}`)
+    } catch (err) {
+      setApiTestResult(`❌ Error: ${err instanceof Error ? err.message : String(err)}`)
     } finally {
       setIsTestingApi(false)
     }
@@ -641,10 +628,23 @@ function CreateAssetPageInner() {
               </div>
               
               <div>
+                <label htmlFor="asset-health-endpoint" className="block text-sm font-medium text-gray-700 mb-1">Health Endpoint</label>
+                <input
+                  id="asset-health-endpoint"
+                  value={healthEndpoint}
+                  onChange={(e) => setHealthEndpoint(e.target.value)}
+                  placeholder="e.g. http://192.168.0.82:3100/api/status"
+                  className="border border-gray-300 p-3 w-full rounded-md shadow-sm focus:ring-blue-600 focus:border-blue-600 font-mono text-sm"
+                />
+                <p className="text-xs text-gray-500 mt-1">
+                  Used to verify connectivity (no auth required). For equipment: <code>/api/health</code>. For sidecar: <code>/api/status</code>.
+                </p>
+              </div>
+              <div>
                 <button
                   type="button"
                   onClick={handleApiTest}
-                  disabled={!dataEndpoint || isTestingApi}
+                  disabled={!healthEndpoint || isTestingApi}
                   className="bg-green-600 hover:bg-green-700 text-white font-semibold px-4 py-2 rounded-md shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
                 >
                   {isTestingApi ? (
