@@ -18,6 +18,10 @@ import {
   ShieldCheck,
   Globe,
   Clock,
+  Package,
+  Network,
+  Copy,
+  Check,
 } from "lucide-react"
 
 type AssetEntry = {
@@ -143,6 +147,9 @@ function DataDisplay({ data }: { data: unknown }) {
   )
 }
 
+type EdcBundle = { asset: unknown; policy: unknown; contractDefinition: unknown }
+type EdcResult = { mode: string; bridgeBaseUrl: string; hint: string; bundle: EdcBundle }
+
 function AssetLiveFeed({ asset }: { asset: AssetEntry }) {
   const [expanded, setExpanded] = useState(false)
   const [live, setLive] = useState(false)
@@ -154,6 +161,41 @@ function AssetLiveFeed({ asset }: { asset: AssetEntry }) {
   const [showRaw, setShowRaw] = useState(false)
   const [historyOpen, setHistoryOpen] = useState(false)
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // EDC Export — Interorganizational Readiness
+  const [edcOpen, setEdcOpen] = useState(false)
+  const [edcLoading, setEdcLoading] = useState(false)
+  const [edcResult, setEdcResult] = useState<EdcResult | null>(null)
+  const [edcError, setEdcError] = useState<string | null>(null)
+  const [edcTab, setEdcTab] = useState<"asset" | "policy" | "contract">("asset")
+  const [bridgeCopied, setBridgeCopied] = useState(false)
+
+  const generateEdcArtifacts = async () => {
+    setEdcLoading(true)
+    setEdcError(null)
+    try {
+      const res = await fetch("/api/edc/register", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ assetId: asset.assetId }),
+      })
+      const json = await res.json()
+      if (!res.ok) throw new Error(json.error || `HTTP ${res.status}`)
+      const b = json.bundles?.[0]
+      setEdcResult({ mode: json.mode, bridgeBaseUrl: json.bridgeBaseUrl, hint: json.hint, bundle: b?.bundle })
+    } catch (e) {
+      setEdcError(e instanceof Error ? e.message : "Failed to generate artifacts")
+    } finally {
+      setEdcLoading(false)
+    }
+  }
+
+  const copyBridgeUrl = () => {
+    if (!edcResult) return
+    navigator.clipboard.writeText(`${edcResult.bridgeBaseUrl}/api/edc/data/${asset.assetId}`)
+    setBridgeCopied(true)
+    setTimeout(() => setBridgeCopied(false), 1500)
+  }
 
   const fetchData = useCallback(async () => {
     if (!asset.apiEndpoint) return
@@ -379,6 +421,127 @@ function AssetLiveFeed({ asset }: { asset: AssetEntry }) {
                   </div>
                 ))}
               </div>
+            </div>
+          )}
+
+          {/* Export Policies Enforcement — owner only */}
+          {asset.isOwner && (
+            <div className="rounded-xl border border-violet-200 bg-violet-50/40 overflow-hidden">
+              <button
+                type="button"
+                onClick={() => setEdcOpen((v) => !v)}
+                className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-violet-50 transition-colors"
+              >
+                {edcOpen ? (
+                  <ChevronDown className="h-4 w-4 text-violet-500 shrink-0" />
+                ) : (
+                  <ChevronRight className="h-4 w-4 text-violet-500 shrink-0" />
+                )}
+                <Package className="h-4 w-4 text-violet-600 shrink-0" />
+                <span className="text-sm font-semibold text-violet-800">Export Policies Enforcement</span>
+                <span className="ml-auto text-xs text-violet-500 shrink-0">Interorganizational · EDC</span>
+              </button>
+
+              {edcOpen && (
+                <div className="border-t border-violet-200 px-4 py-4 space-y-4 bg-white/60">
+                  <p className="text-xs text-gray-600 leading-relaxed">
+                    Generates EDC Management API v3 artifacts —{" "}
+                    <strong>Asset</strong>, <strong>ODRL PolicyDefinition</strong> and{" "}
+                    <strong>ContractDefinition</strong> — and exposes a data bridge routed through the
+                    Sidecar Proxy, materializing interorganizational federation readiness.
+                  </p>
+
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <button
+                      type="button"
+                      onClick={generateEdcArtifacts}
+                      disabled={edcLoading}
+                      className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-violet-600 text-white hover:bg-violet-700 disabled:opacity-50 transition"
+                    >
+                      {edcLoading ? (
+                        <><Loader2 className="h-4 w-4 animate-spin" /> Generating…</>
+                      ) : (
+                        <><Network className="h-4 w-4" /> Generate EDC Artifacts</>
+                      )}
+                    </button>
+                    {edcResult && (
+                      <span className={`inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs font-medium border ${
+                        edcResult.mode === "pushed"
+                          ? "bg-green-50 text-green-700 border-green-200"
+                          : "bg-amber-50 text-amber-700 border-amber-200"
+                      }`}>
+                        {edcResult.mode === "pushed" ? "pushed to EDC" : "export mode"}
+                      </span>
+                    )}
+                  </div>
+
+                  {edcError && (
+                    <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700">
+                      {edcError}
+                    </div>
+                  )}
+
+                  {edcResult && (
+                    <div className="space-y-3">
+                      {/* Data bridge URL */}
+                      <div className="rounded-lg border border-gray-200 bg-gray-50 px-3 py-2">
+                        <p className="text-[10px] font-semibold text-gray-500 uppercase tracking-wide mb-1">
+                          Data Bridge — Sidecar Proxy
+                        </p>
+                        <div className="flex items-center gap-2">
+                          <code className="text-xs text-blue-700 font-mono break-all flex-1">
+                            {edcResult.bridgeBaseUrl}/api/edc/data/{asset.assetId}
+                          </code>
+                          <button
+                            type="button"
+                            onClick={copyBridgeUrl}
+                            className="shrink-0 p-1 rounded hover:bg-gray-200 transition"
+                            title="Copy URL"
+                          >
+                            {bridgeCopied ? (
+                              <Check className="h-3.5 w-3.5 text-green-600" />
+                            ) : (
+                              <Copy className="h-3.5 w-3.5 text-gray-500" />
+                            )}
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Artifact tabs */}
+                      <div>
+                        <div className="flex gap-1 mb-2">
+                          {(["asset", "policy", "contract"] as const).map((tab) => (
+                            <button
+                              key={tab}
+                              type="button"
+                              onClick={() => setEdcTab(tab)}
+                              className={`px-3 py-1.5 text-xs font-medium rounded-md transition ${
+                                edcTab === tab
+                                  ? "bg-violet-600 text-white"
+                                  : "bg-gray-100 text-gray-600 hover:bg-gray-200"
+                              }`}
+                            >
+                              {tab === "asset" ? "Asset" : tab === "policy" ? "ODRL Policy" : "ContractDefinition"}
+                            </button>
+                          ))}
+                        </div>
+                        <pre className="bg-slate-900 text-emerald-300 text-xs rounded-lg p-4 overflow-x-auto max-h-72 leading-relaxed">
+                          {JSON.stringify(
+                            edcTab === "asset"
+                              ? edcResult.bundle.asset
+                              : edcTab === "policy"
+                              ? edcResult.bundle.policy
+                              : edcResult.bundle.contractDefinition,
+                            null, 2
+                          )}
+                        </pre>
+                      </div>
+
+                      <p className="text-xs text-gray-500 italic">{edcResult.hint}</p>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           )}
         </div>
