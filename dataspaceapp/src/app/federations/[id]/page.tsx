@@ -190,7 +190,7 @@ export default function FederationDetailsPage() {
         user.uid === federation.ownerId,
     )
     const canRequestMembership = Boolean(user && profile?.userType === "dataclient")
-    const hasConsumerConnectorProfile = Boolean(profile?.participantId && profile?.connectorDspBaseUrl)
+    const hasConsumerConnectorProfile = Boolean(profile?.participantId)
 
     useEffect(() => {
         const loadOwnerConnector = async () => {
@@ -592,11 +592,11 @@ export default function FederationDetailsPage() {
         if (!user || !profile || !federation || !canRequestMembership) return
 
         if (!hasConsumerConnectorProfile) {
-            setConnectionError("Configure your consumer connector profile before requesting a provider connector connection.")
+            setConnectionError("Set a Participant ID in your connector profile before requesting a connection.")
             return
         }
 
-        if (!ownerConnector?.participantId || !ownerConnector.connectorDspBaseUrl) {
+        if (!ownerConnector?.participantId) {
             setConnectionError("The Data Owner connector profile is not ready yet. Try again later.")
             return
         }
@@ -611,12 +611,14 @@ export default function FederationDetailsPage() {
             setConnectionError("")
             setConnectionMessage("")
 
+            const isSelfService = (federation.admissionMode ?? "") === "self-service"
+
             await addDoc(collection(db, "connectorConnections"), {
                 ownerId: federation.ownerId ?? "",
                 ownerEmail: typeof federation.ownerEmail === "string" ? federation.ownerEmail : "",
                 ownerName: typeof federation.ownerName === "string" ? federation.ownerName : "",
                 providerParticipantId: ownerConnector.participantId,
-                providerConnectorDspBaseUrl: ownerConnector.connectorDspBaseUrl,
+                providerConnectorDspBaseUrl: ownerConnector.connectorDspBaseUrl ?? "",
                 providerConnectorManagementBaseUrl: ownerConnector.connectorManagementBaseUrl ?? "",
                 providerCatalogUrl: ownerConnector.federatedCatalogUrl ?? "",
                 requesterId: user.uid,
@@ -626,12 +628,17 @@ export default function FederationDetailsPage() {
                 consumerConnectorDspBaseUrl: profile.connectorDspBaseUrl ?? "",
                 consumerConnectorManagementBaseUrl: profile.connectorManagementBaseUrl ?? "",
                 consumerCatalogUrl: profile.federatedCatalogUrl ?? "",
-                status: "requested",
+                status: isSelfService ? "active" : "requested",
+                approvedAt: isSelfService ? serverTimestamp() : null,
                 createdAt: serverTimestamp(),
                 updatedAt: serverTimestamp(),
             })
 
-            setConnectionMessage("Connector connection request submitted. Wait for the Data Owner to approve it before requesting federation membership.")
+            setConnectionMessage(
+                isSelfService
+                    ? "Connector connection established automatically (self-service federation). You can now join the federation."
+                    : "Connector connection request submitted. Wait for the Data Owner to approve it before requesting federation membership.",
+            )
             setMembershipsVersion((value) => value + 1)
         } catch (err) {
             console.error("Error requesting connector connection:", err)
@@ -650,7 +657,7 @@ export default function FederationDetailsPage() {
         }
 
         if (!hasConsumerConnectorProfile) {
-            setMembershipError("Configure your consumer connector profile before requesting federation membership.")
+            setMembershipError("Set a Participant ID in your connector profile before requesting federation membership.")
             return
         }
 
@@ -1167,8 +1174,8 @@ export default function FederationDetailsPage() {
 
                                     {!hasConsumerConnectorProfile ? (
                                         <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                                            Configure your consumer connector before requesting access to this provider connector.
-                                            <Link href="/profile/connector" className="ml-1 font-medium underline">
+                                            Set a Participant ID in your connector profile before requesting access.
+                                            <Link href="/profile/connector/configure" className="ml-1 font-medium underline">
                                                 Open connector profile
                                             </Link>
                                         </div>
