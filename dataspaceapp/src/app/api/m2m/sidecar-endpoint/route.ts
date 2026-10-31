@@ -53,6 +53,7 @@ export async function POST(request: Request) {
   if (!db) return NextResponse.json({ error: "Server credentials not configured (FIREBASE_SERVICE_ACCOUNT_JSON)" }, { status: 503, headers: M2M_CORS })
 
   const organization = body.organization.trim()
+  if (!slugify(organization)) return NextResponse.json({ error: "Required: organization, sidecarEndpoint" }, { status: 400, headers: M2M_CORS })
   const sidecarEndpoint = body.sidecarEndpoint.replace(/\/+$/, "")
 
   const orgRef = db.collection(M2M_ORGS).doc(slugify(organization))

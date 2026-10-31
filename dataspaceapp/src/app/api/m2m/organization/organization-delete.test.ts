@@ -208,4 +208,40 @@ describe("DELETE /api/m2m/organization", () => {
     expect((await DELETE(del("organization=IFSC-GASPAR", { "X-M2M-Admin-Key": "admin" }))).status).toBe(503)
     expect(has("assets", "a1")).toBe(true)
   })
+
+  it("revokes a token from a human-flow provider with the global sidecar secret", async () => {
+    await seed("accessTokens", "t-human", {
+      providerId: "firebase-uid-123", requesterId: LAI1, status: "active", sidecarTokenId: "sc-h", sidecarEndpoint: "http://plant-ui:3100",
+    })
+    const { DELETE } = await import("./route")
+    const j = await (await DELETE(del("organization=IFSC-GASPAR"))).json()
+    expect(sidecarCalls).toContainEqual({ url: "http://plant-ui:3100/api/tokens/sc-h", auth: "Bearer admin" })
+    expect(store.docs("accessTokens").get("t-human")?.status).toBe("revoked")
+    expect(j.unrevokedTokens).toEqual([])
+  })
+
+  it("keeps the organization secret when a federation is kept, so it can register again", async () => {
+    await seed("assets", "a-foreign-in-f1", { ownerId: OTHER, federationId: "f1" })
+    const { DELETE } = await import("./route")
+    const j = await (await DELETE(del("organization=IFSC-GASPAR"))).json()
+    expect(has("m2mOrganizations", "ifsc-gaspar")).toBe(true)
+    expect(j.deleted.m2mOrganizations).toBeUndefined()
+    expect(j.next).toContain("same X-Sidecar-Secret")
+  })
+
+  it("closes shared agreements, credentials and connections so a new owner of the name does not inherit them", async () => {
+    await seed("credentialGrants", "cg-shared", { ownerId: OTHER, participantId: LAI1, status: "active" })
+    await seed("connectorConnections", "cc-shared", { providerParticipantId: OTHER, consumerParticipantId: LAI1, status: "active" })
+    const { DELETE } = await import("./route")
+    await DELETE(del("organization=IFSC-GASPAR"))
+    expect(store.docs("contractAgreements").get("ag-shared")?.status).toBe("terminated")
+    expect(store.docs("credentialGrants").get("cg-shared")?.status).toBe("revoked")
+    expect(store.docs("connectorConnections").get("cc-shared")?.status).toBe("closed")
+  })
+
+  it("rejects an organization name without letters or digits", async () => {
+    const { DELETE } = await import("./route")
+    expect((await DELETE(del("organization=%21%21%21"))).status).toBe(400)
+  })
 })
+

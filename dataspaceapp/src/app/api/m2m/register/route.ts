@@ -93,6 +93,7 @@ export async function POST(request: Request) {
 
   // ── segredo do Sidecar da organização (antes de qualquer escrita) ──
   const orgSlug = slugify(organization)
+  if (!orgSlug || !slug) return NextResponse.json({ error: "organization and equipmentSlug/name must contain letters or digits" }, { status: 400, headers: M2M_CORS })
   const providedSecret = (request.headers.get("x-sidecar-secret") ?? "").trim()
   const orgRef = db.collection(M2M_ORGS).doc(orgSlug)
   const orgDoc = await orgRef.get()

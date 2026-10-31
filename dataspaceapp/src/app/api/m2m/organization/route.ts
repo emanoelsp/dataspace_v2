@@ -20,7 +20,7 @@ import { FieldValue, type DocumentReference, type Firestore } from "firebase-adm
 import {
   getDb, slugify, M2M_CORS, M2M_ORGS, M2M_OWNER_PREFIX, adminKeyError, apiKeyError,
   generateSidecarSecret, isAcceptableSidecarSecret, encryptSidecarSecret,
-  decryptSidecarSecret, secretsMatch, sidecarSecretForParticipant, sidecarRevokeToken,
+  decryptSidecarSecret, secretsMatch, sidecarSecretForProvider, sidecarRevokeToken,
 } from "@/lib/m2m"
 
 export const runtime = "nodejs"
@@ -34,9 +34,9 @@ export async function POST(request: Request) {
   let body: Body
   try { body = await request.json() } catch { return NextResponse.json({ error: "Invalid JSON body" }, { status: 400, headers: M2M_CORS }) }
 
-  const organization = body.organization?.trim() ?? ""
-  if (!organization) return NextResponse.json({ error: "Required: organization" }, { status: 400, headers: M2M_CORS })
-  const provided = body.sidecarSecret?.trim() ?? ""
+  const organization = typeof body?.organization === "string" ? body.organization.trim() : ""
+  if (!slugify(organization)) return NextResponse.json({ error: "Required: organization" }, { status: 400, headers: M2M_CORS })
+  const provided = typeof body.sidecarSecret === "string" ? body.sidecarSecret.trim() : ""
   if (provided && !isAcceptableSidecarSecret(provided)) {
     return NextResponse.json({ error: "sidecarSecret must have at least 32 characters." }, { status: 400, headers: M2M_CORS })
   }
@@ -156,7 +156,7 @@ export async function DELETE(request: Request) {
 
   const params = new URL(request.url).searchParams
   const organization = params.get("organization")?.trim() ?? ""
-  if (!organization) return NextResponse.json({ error: "Required query param: organization" }, { status: 400, headers: M2M_CORS })
+  if (!slugify(organization)) return NextResponse.json({ error: "Required query param: organization" }, { status: 400, headers: M2M_CORS })
   const dryRun = params.get("dryRun") === "true"
 
   const db = getDb()
@@ -193,35 +193,53 @@ export async function DELETE(request: Request) {
   const activeTokens = [...(found.get("accessTokens")?.values() ?? []), ...(shared.get("accessTokens")?.values() ?? [])]
     .filter(t => t.data.status === "active")
   const unrevoked = new Set<string>()
+  let revokedInSidecar = 0
   await Promise.all(activeTokens.map(async t => {
     if (!t.data.sidecarTokenId) return
-    const secret = await sidecarSecretForParticipant(db, String(t.data.providerId ?? "")).catch(() => null)
+    const secret = await sidecarSecretForProvider(db, String(t.data.providerId ?? ""))
     const ok = secret && t.data.sidecarEndpoint
       ? await sidecarRevokeToken(String(t.data.sidecarEndpoint), String(t.data.sidecarTokenId), secret)
       : false
-    if (!ok) unrevoked.add(t.ref.id)
+    if (ok) revokedInSidecar++
+    else unrevoked.add(t.ref.id)
   }))
   found.get("accessTokens")?.forEach((_, id) => { if (unrevoked.has(id)) found.get("accessTokens")!.delete(id) })
-  // registros compartilhados ficam como histórico da outra parte, com o token revogado
-  await Promise.all([...(shared.get("accessTokens")?.values() ?? [])]
-    .filter(t => t.data.status === "active" && !unrevoked.has(t.ref.id))
-    .map(t => t.ref.set({ status: "revoked", revokedAt: FieldValue.serverTimestamp(), revokedReason: "organization-deleted" }, { merge: true })))
+
+  // registros compartilhados ficam como histórico da outra parte, mas encerrados:
+  // quem registrar de novo o mesmo nome (mesmos participantIds) não os herda ativos
+  const ts = FieldValue.serverTimestamp()
+  const closing: Record<string, Record<string, unknown>> = {
+    accessTokens: { status: "revoked", revokedAt: ts, revokedReason: "organization-deleted" },
+    contractAgreements: { status: "terminated", terminatedAt: ts, terminatedReason: "organization-deleted" },
+    credentialGrants: { status: "revoked", revokedAt: ts, revokedReason: "organization-deleted" },
+    connectorConnections: { status: "closed", closedAt: ts, closedReason: "organization-deleted" },
+    accessRequests: { status: "cancelled", updatedAt: ts },
+  }
+  await Promise.all([...shared].flatMap(([col, docs]) => [...docs.values()]
+    .filter(d => !(col === "accessTokens" && (d.data.status !== "active" || unrevoked.has(d.ref.id))))
+    .map(d => d.ref.set(closing[col], { merge: true }))))
 
   for (const docs of found.values()) await Promise.all([...docs.values()].map(d => d.ref.delete()))
-  await orgRef.delete()
+  // federação mantida continua com o ownerId da organização: o segredo fica para
+  // o próximo register (com ele) não ser barrado como organização legada
+  const orgDocExisted = (await orgRef.get()).exists
+  const releaseName = keptFederations.length === 0
+  if (releaseName && orgDocExisted) await orgRef.delete()
 
   return NextResponse.json({
     ok: true,
     organization,
-    deleted: { ...tally(found), m2mOrganizations: 1 },
+    deleted: { ...tally(found), ...(releaseName && orgDocExisted ? { m2mOrganizations: 1 } : {}) },
     keptShared,
     keptFederations,
-    revokedTokens: activeTokens.length - unrevoked.size,
-    // Sidecar fora do ar: o token segue válido nele até expiresAt
+    revokedTokens: revokedInSidecar,
+    // Sidecar fora do ar (ou sem segredo para falar com ele): o token segue válido nele até expiresAt
     unrevokedTokens: activeTokens.filter(t => unrevoked.has(t.ref.id)).map(t => ({
       id: t.ref.id, sidecarEndpoint: String(t.data.sidecarEndpoint ?? ""), equipmentSlug: String(t.data.equipmentSlug ?? ""),
     })),
-    next: "Clear the Sidecar .data/ folder, then POST /api/m2m/register again: the first register sets a new sidecar secret.",
+    next: releaseName
+      ? "Clear the Sidecar .data/ folder, then POST /api/m2m/register again: the first register sets a new sidecar secret."
+      : "A federation was kept (it holds other organizations' assets), so the organization keeps its sidecar secret: register again with the same X-Sidecar-Secret.",
   }, { headers: M2M_CORS })
 }
 

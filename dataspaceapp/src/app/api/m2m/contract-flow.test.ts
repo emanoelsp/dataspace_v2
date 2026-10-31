@@ -236,6 +236,18 @@ describe("offer → negotiate → agreement", () => {
     expect(sidecarCalls).toHaveLength(0)
   })
 
+  it("does not reuse a connection closed when an organization was deleted", async () => {
+    const provider = String(store.docs("assets").get(assetId)?.ownerId)
+    await store.collection("connectorConnections").doc("cc-closed").set({
+      providerParticipantId: provider, consumerParticipantId: CONSUMER, status: "closed", source: "m2m",
+    })
+    const { res, json } = await negotiate({ targetAssetId: assetId })
+    expect(res.status).toBe(200)
+    const step = json.steps.find((s: { step: string }) => s.step === "connector-connection")
+    expect(step.status).toBe("created")
+    expect(step.id).not.toBe("cc-closed")
+  })
+
   it("shows the directives and resources before signing", async () => {
     const { GET } = await import("./offer/route")
     const json = await (await GET(new NextRequest(`http://test/api/m2m/offer?assetId=${assetId}`))).json()

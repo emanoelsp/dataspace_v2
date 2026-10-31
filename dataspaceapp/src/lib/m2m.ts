@@ -35,7 +35,7 @@ export function apiKeyError(request: Request): string | null {
   const required = process.env.M2M_API_KEY
   if (!required) return null
   const provided = request.headers.get("x-m2m-key") ?? ""
-  return provided === required ? null : "Missing or invalid X-M2M-Key header."
+  return provided && secretsMatch(provided, required) ? null : "Missing or invalid X-M2M-Key header."
 }
 
 export function getDb(): Firestore | null {
@@ -273,6 +273,17 @@ export async function sidecarSecretForParticipant(db: Firestore, participantId: 
   const secret = decryptSidecarSecret(enc)
   if (!secret) throw new SidecarSecretUnavailableError("Sidecar secret store unavailable (SIDECAR_SECRETS_KEY)")
   return secret
+}
+
+/**
+ * Segredo com que o token foi empurrado ao Sidecar do provedor (o mesmo critério
+ * do negotiate): o da organização M2M, ou o global para provedor do fluxo humano.
+ * Provedor M2M sem segredo próprio → null (nunca enviar o global a URL de M2M).
+ */
+export async function sidecarSecretForProvider(db: Firestore, providerId: string): Promise<string | null> {
+  const own = await sidecarSecretForParticipant(db, providerId).catch(() => null)
+  if (own) return own
+  return providerId.startsWith(M2M_OWNER_PREFIX) ? null : SIDECAR_ADMIN_SECRET
 }
 
 // ── Recursos de dados de um CPS (ex.: 5 catálogos na mesma API) ───────────
