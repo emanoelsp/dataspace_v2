@@ -640,8 +640,9 @@ Mostra as diretrizes que o consumidor aceita ao negociar.
 | **URL** | `https://dataspace-v2.vercel.app/api/m2m/negotiate` |
 | **Headers** | `Content-Type: application/json`, `X-M2M-Key: <M2M_API_KEY>`, `X-Sidecar-Secret: <segredo da organização do CONSUMIDOR>` |
 
-O `consumerParticipantId` precisa ser de uma organização registrada, e o header
-prova que o chamador é dela — ninguém negocia em nome de outro participante.
+O `consumerParticipantId` precisa ter sido registrado via `/api/m2m/register`,
+e o header prova que o chamador é da organização dele — ninguém negocia em nome
+de outro participante.
 
 **Body:**
 
@@ -904,8 +905,10 @@ continuam válidos; só as URLs mudam.
   da organização em `m2mOrganizations` e refazer o register. O fluxo humano
   (`push-token`, `register-equipment`) continua com o segredo global.
 - O primeiro register de uma organização **nova** define o segredo dela
-  (confiança no primeiro uso). Organizações que já tinham CPS só recebem segredo
-  pelo administrador (`/api/m2m/organization`, `M2M_ADMIN_KEY`).
+  (confiança no primeiro uso). Organizações cujo prefixo de id já é usado (por
+  CPS M2M ou por conectores/ativos/federações do fluxo humano) só recebem segredo
+  pelo administrador (`/api/m2m/organization`, `M2M_ADMIN_KEY`). A checagem lê
+  as coleções inteiras — adequada à escala da PoC.
 - A identidade M2M é por organização: quem tem o segredo da organização age por
   qualquer `participantId` dela.
 - O trecho LAN Sidecar → CPS usa o token fixo `demo`, que os CPS aceitam mesmo

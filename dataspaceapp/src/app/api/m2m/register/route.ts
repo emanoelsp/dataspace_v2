@@ -45,7 +45,7 @@ import {
   M2M_CORS, M2M_ORGS, apiKeyError, parseResources, resourceUrls,
   generateSidecarSecret, isAcceptableSidecarSecret, encryptSidecarSecret,
   decryptSidecarSecret, secretsMatch, governanceSnapshotForAsset, upsertContractOffer,
-  m2mConnectorsOfOrg, upsertMembership,
+  orgNamespaceInUse, upsertMembership,
 } from "@/lib/m2m"
 
 export const runtime = "nodejs"
@@ -108,7 +108,7 @@ export async function POST(request: Request) {
     }
     sidecarSecret = stored
   } else {
-    if ((await m2mConnectorsOfOrg(db, organization)).length > 0) {
+    if (await orgNamespaceInUse(db, organization)) {
       return NextResponse.json({
         error: `Organization "${organization}" already has CPS registered without a sidecar secret. Ask the Dataspace admin to set it (POST /api/m2m/organization), then send it in X-Sidecar-Secret.`,
       }, { status: 403, headers: M2M_CORS })
@@ -119,10 +119,15 @@ export async function POST(request: Request) {
     sidecarSecret = providedSecret || generateSidecarSecret()
     const sidecarSecretEnc = encryptSidecarSecret(sidecarSecret)
     if (!sidecarSecretEnc) return NextResponse.json({ error: "Sidecar secret store unavailable (SIDECAR_SECRETS_KEY)" }, { status: 503, headers: M2M_CORS })
-    await orgRef.set({
-      organization, sidecarSecretEnc, source: "m2m",
-      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
-    })
+    // create() falha se o documento já existe: dois primeiros registers simultâneos não disputam a organização
+    try {
+      await orgRef.create({
+        organization, sidecarSecretEnc, source: "m2m",
+        createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+      })
+    } catch {
+      return NextResponse.json({ error: `Organization "${organization}" was just registered by another call. Retry with its X-Sidecar-Secret.` }, { status: 409, headers: M2M_CORS })
+    }
     if (!providedSecret) issuedSecret = sidecarSecret
   }
   await orgRef.set({ sidecarEndpoint, updatedAt: FieldValue.serverTimestamp() }, { merge: true })

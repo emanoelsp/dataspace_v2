@@ -21,6 +21,10 @@ class Snap {
 class DocRef {
   constructor(private store: Store, private col: string, public id: string) {}
   async get() { return new Snap(this.id, this.store.docs(this.col).get(this.id), this) }
+  async create(data: Data) {
+    if (this.store.docs(this.col).has(this.id)) throw new Error("ALREADY_EXISTS")
+    this.store.docs(this.col).set(this.id, convert(data))
+  }
   async set(data: Data, opts?: { merge?: boolean }) {
     const cur = this.store.docs(this.col).get(this.id)
     this.store.docs(this.col).set(this.id, opts?.merge ? { ...cur, ...convert(data) } : convert(data))

@@ -126,6 +126,26 @@ describe("register — sidecar secret per organization", () => {
     expect(sidecarCalls).toHaveLength(0)
   })
 
+  it("does not let anyone claim an organization whose ids are already used by the UI flow", async () => {
+    await store.collection("connectorProfiles").doc("human").set({
+      source: "ui", participantId: "urn:dataspace:participant:ifsc-gaspar:lab-user",
+    })
+    expect((await register({}, { "X-Sidecar-Secret": OWN_SECRET })).res.status).toBe(403)
+    expect(store.docs("m2mOrganizations").size).toBe(0)
+  })
+
+  it("lets only one of two concurrent first registers claim the organization", async () => {
+    const other = "scs_concurrent_attacker_0123456789abcdef"
+    const results = await Promise.all([
+      register({}, { "X-Sidecar-Secret": OWN_SECRET }),
+      register({ equipmentSlug: "cpslai9" }, { "X-Sidecar-Secret": other }),
+    ])
+    expect(results.map(r => r.res.status).sort()).toEqual([200, 409])
+    const winner = results.find(r => r.res.status === 200)!
+    const winnerSecret = winner === results[0] ? OWN_SECRET : other
+    expect(sidecarCalls.every(c => c.auth === `Bearer ${winnerSecret}`)).toBe(true)
+  })
+
   it("lets the admin set the secret of a legacy organization, which then registers with it", async () => {
     await store.collection("connectorProfiles").doc("legacy").set({
       source: "m2m", participantId: "urn:dataspace:participant:ifsc-gaspar:old-resource",
@@ -198,6 +218,9 @@ describe("offer → negotiate → agreement", () => {
     expect((await negotiate({ targetAssetId: assetId }, { "X-Sidecar-Secret": OWN_SECRET })).res.status).toBe(403)
     const spoofed = await negotiate({ targetAssetId: assetId, consumerParticipantId: "urn:dataspace:participant:ghost-org:x" })
     expect(spoofed.res.status).toBe(403)
+    // prefixo da organização certo e segredo certo, mas participante nunca registrado via M2M
+    const unregistered = await negotiate({ targetAssetId: assetId, consumerParticipantId: "urn:dataspace:participant:acsm-lab:not-registered" })
+    expect(unregistered.res.status).toBe(403)
     expect(store.docs("contractAgreements").size).toBe(0)
     expect(sidecarCalls).toHaveLength(0)
   })

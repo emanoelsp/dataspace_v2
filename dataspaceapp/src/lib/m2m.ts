@@ -372,11 +372,33 @@ export async function upsertContractOffer(
 
 // ── Autenticação de participante e administração ─────────────────────────
 
-/** O segredo enviado prova que o chamador é da organização do participante. */
+/**
+ * O segredo enviado prova que o chamador é da organização do participante — e o
+ * participante precisa ter sido registrado via M2M (não basta o prefixo do id).
+ */
 export async function participantSecretMatches(db: Firestore, participantId: string, provided: string): Promise<boolean> {
-  if (!provided) return false
+  if (!provided || !participantId) return false
+  const registered = await db.collection("connectorProfiles")
+    .where("participantId", "==", participantId).where("source", "==", "m2m").limit(1).get()
+  if (registered.empty) return false
   const secret = await sidecarSecretForParticipant(db, participantId)
   return Boolean(secret && secretsMatch(provided, secret))
+}
+
+/**
+ * Algum conector, ativo ou federação (de qualquer origem, inclusive o fluxo
+ * humano) já usa ids urn:dataspace:participant:{org}:* — então a organização
+ * não pode ser assumida pelo primeiro register.
+ */
+export async function orgNamespaceInUse(db: Firestore, organization: string): Promise<boolean> {
+  const prefix = `${M2M_OWNER_PREFIX}${slugify(organization)}:`
+  const [connectors, assets, federations] = await Promise.all([
+    db.collection("connectorProfiles").get(),
+    db.collection("assets").get(),
+    db.collection("federations").get(),
+  ])
+  return connectors.docs.some(d => String(d.data()?.participantId ?? "").startsWith(prefix))
+    || [...assets.docs, ...federations.docs].some(d => String(d.data()?.ownerId ?? "").startsWith(prefix))
 }
 
 /** Conectores M2M de uma organização (participantId urn:dataspace:participant:{org}:*). */
