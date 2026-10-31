@@ -1,6 +1,6 @@
 /**
  * Firestore em memória para testes das rotas Admin SDK — só as operações
- * usadas pelas rotas (collection/doc/where ==/array-contains/limit/add/set).
+ * usadas pelas rotas (collection/doc/where ==/array-contains/limit/add/set/delete).
  */
 type Data = Record<string, unknown>
 
@@ -29,6 +29,7 @@ class DocRef {
     const cur = this.store.docs(this.col).get(this.id)
     this.store.docs(this.col).set(this.id, opts?.merge ? { ...cur, ...convert(data) } : convert(data))
   }
+  async delete() { this.store.docs(this.col).delete(this.id) }
 }
 class Query {
   private preds: Array<(d: Data) => boolean> = []

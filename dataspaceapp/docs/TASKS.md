@@ -42,6 +42,7 @@
 - [x] M2M: consumidor autenticado pelo segredo da organização no negotiate; agreement só para as partes; organização legada só via admin (`POST /api/m2m/organization`, `M2M_ADMIN_KEY`); adesão pendente em federação com aprovação
 - [x] M2M: `resources` por CPS (register → Sidecar → discover → negotiate com permissão por recurso)
 - [x] M2M: negociação completa (adesão, oferta, conexão, acordo com duas assinaturas, credencial) + `GET /api/m2m/offer` e `GET /api/m2m/agreement`
+- [x] M2M: `DELETE /api/m2m/organization` — a organização apaga tudo o que registrou (com `dryRun`), preservando contratos com outras organizações
 
 ## Em andamento
 

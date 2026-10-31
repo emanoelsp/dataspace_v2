@@ -284,6 +284,7 @@ Lista extraída de `dataspaceapp/src/app/api/**/route.ts`.
 | POST | https://dataspace-v2.vercel.app/api/m2m/negotiate | negocia o contrato (adesão, oferta, conexão, acordo, credencial), gera o token e envia ao Sidecar |
 | GET | https://dataspace-v2.vercel.app/api/m2m/agreement | validação de um contrato negociado (só as partes) |
 | POST | https://dataspace-v2.vercel.app/api/m2m/organization | admin: define/reseta o segredo do Sidecar de uma organização |
+| DELETE | https://dataspace-v2.vercel.app/api/m2m/organization?organization=… | a organização apaga tudo o que registrou via M2M e recomeça |
 | POST | https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint | troca a URL do Sidecar de todos os CPS da organização e re-registra cada CPS |
 | GET | https://dataspace-v2.vercel.app/api/m2m/monitor | monitor M2M |
 
@@ -884,6 +885,73 @@ continuam válidos; só as URLs mudam.
 | 6 | Validar contrato | GET | `https://dataspace-v2.vercel.app/api/m2m/agreement?contractRef=…` | `X-M2M-Key`, `X-Sidecar-Secret` (uma das partes) |
 | — | Segredo de organização legada / perdido | POST | `https://dataspace-v2.vercel.app/api/m2m/organization` | `X-M2M-Admin-Key` (admin) |
 | — | URL do túnel mudou | POST | `https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint` | `X-M2M-Key`, `X-Sidecar-Secret` |
+| — | Recomeçar do zero | DELETE | `https://dataspace-v2.vercel.app/api/m2m/organization?organization=…` | `X-M2M-Key`, `X-Sidecar-Secret` |
+
+### 6.9 Recomeçar do zero — `DELETE /api/m2m/organization`
+
+Apaga tudo o que a organização registrou via M2M, para refazer os registers do
+zero sem depender do administrador.
+
+| Query | Obrigatório | Descrição |
+|---|---|---|
+| `organization` | sim | a mesma `organization` do register (maiúsculas não importam) |
+| `dryRun` | não | `true` só conta o que seria apagado |
+
+Headers: `X-M2M-Key` e `X-Sidecar-Secret` (o segredo da organização).
+
+```bash
+# 1) simulação: o que seria apagado
+curl -X DELETE "https://dataspace-v2.vercel.app/api/m2m/organization?organization=IFSC-GASPAR&dryRun=true" \
+  -H "X-M2M-Key: <M2M_API_KEY>" \
+  -H "X-Sidecar-Secret: <segredo da organização>"
+
+# 2) apagar de verdade
+curl -X DELETE "https://dataspace-v2.vercel.app/api/m2m/organization?organization=IFSC-GASPAR" \
+  -H "X-M2M-Key: <M2M_API_KEY>" \
+  -H "X-Sidecar-Secret: <segredo da organização>"
+```
+
+Resposta (200):
+
+```json
+{
+  "ok": true,
+  "organization": "IFSC-GASPAR",
+  "deleted": { "connectorProfiles": 3, "assets": 3, "federations": 1, "compliance": 1,
+               "governance": 3, "contractOffers": 3, "federationMemberships": 4,
+               "contractAgreements": 2, "credentialGrants": 2, "accessTokens": 2,
+               "m2mOrganizations": 1 },
+  "keptShared": { "contractAgreements": 1, "accessTokens": 1 },
+  "keptFederations": [],
+  "revokedTokens": 3,
+  "next": "Clear the Sidecar .data/ folder, then POST /api/m2m/register again: the first register sets a new sidecar secret."
+}
+```
+
+O que é apagado: conectores, ativos, federações criadas pela organização (com
+compliance e adesões de terceiros), governança, ofertas, adesões da organização
+a outras federações, conexões, acordos, credenciais, tokens e solicitações entre
+CPS da própria organização. Por último, o registro do segredo.
+
+O que fica:
+
+- **contratos com outras organizações** (`keptShared`): são também histórico da
+  outra parte. O token ativo é revogado no Sidecar do provedor e marcado
+  `revoked` no Dataspace;
+- **federação da organização com ativo de outra organização**
+  (`keptFederations`): apagar deixaria o ativo alheio órfão;
+- documentos criados pela interface web (não M2M).
+
+Depois de apagar, a organização está livre: o próximo register cria um segredo
+novo (header `X-Sidecar-Secret` ou gerado). Apague a pasta `.data/` do Sidecar
+para limpar o lado local.
+
+| Resposta | Causa |
+|---|---|
+| `400 Required query param: organization` | falta `?organization=` |
+| `401 Missing or invalid X-M2M-Key header.` | header ausente ou errado |
+| `403 Missing or invalid X-Sidecar-Secret header.` | segredo ausente ou errado |
+| `404 Organization "…" has no sidecar secret…` | organização sem segredo: o admin define antes (`POST /api/m2m/organization`) |
 
 ---
 

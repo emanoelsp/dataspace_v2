@@ -93,6 +93,14 @@ const INTERFACES = [
     body: { organization: "plant1", sidecarSecret: "(opcional, ≥ 32 chars) — sem ele, gera e devolve uma vez" },
   },
   {
+    name: "delete organization",
+    method: "DELETE", path: "/api/m2m/organization",
+    description: "A organização apaga tudo o que registrou via M2M (conectores, ativos, federações, governança, ofertas, adesões, contratos, credenciais, tokens) e o próprio segredo, para recomeçar com um register novo. Contratos com outras organizações ficam como histórico delas, com o token revogado. dryRun=true só conta. Exige X-Sidecar-Secret.",
+    headers: { "X-M2M-Key": "<M2M_API_KEY>", "X-Sidecar-Secret": "<segredo do Sidecar da organização>" },
+    query: { organization: "plant1", dryRun: "(opcional) true" },
+    returns: { ok: true, deleted: { connectorProfiles: 3, assets: 3, federations: 1 }, keptShared: {}, keptFederations: [], revokedTokens: 0 },
+  },
+  {
     name: "monitor",
     method: "GET", path: "/api/m2m/monitor",
     description: "Observabilidade: quem troca com quem (grafo), tokens/contratos ativos e acessos recentes do PEP. Somente leitura.",

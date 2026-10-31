@@ -276,8 +276,40 @@ Atualiza os 3 CPS de uma vez; tokens já emitidos continuam válidos.
 
 ---
 
+## Parte E — Recomeçar do zero (apagar tudo)
+
+Para remover tudo o que a IFSC-GASPAR registrou (CPS, federações, contratos,
+tokens) e refazer as Partes C e D do zero. Precisa do segredo da organização
+(Parte B).
+
+```bash
+# 1) simulação: lista quantos documentos seriam apagados, sem apagar
+curl -X DELETE "https://dataspace-v2.vercel.app/api/m2m/organization?organization=IFSC-GASPAR&dryRun=true" \
+  -H "X-M2M-Key: <M2M_API_KEY>" \
+  -H "X-Sidecar-Secret: <segredo da organização>"
+
+# 2) apagar
+curl -X DELETE "https://dataspace-v2.vercel.app/api/m2m/organization?organization=IFSC-GASPAR" \
+  -H "X-M2M-Key: <M2M_API_KEY>" \
+  -H "X-Sidecar-Secret: <segredo da organização>"
+```
+
+Depois:
+
+1. Pare o Sidecar, apague a pasta `.data/` dele e suba de novo.
+2. O registro do segredo também foi apagado: no primeiro register da Parte C,
+   mande no `X-Sidecar-Secret` o segredo que está no `.env.local` (pode ser o
+   mesmo de antes) — ele vira o segredo da organização outra vez.
+3. Refaça a Parte C (3 CPS com os 5 recursos) e a Parte D.
+
+Contratos feitos com CPS de **outras** organizações não são apagados (são
+histórico da outra parte); os tokens deles são revogados.
+
+---
+
 ## Checklist
 
+- [ ] (se for recomeçar) Parte E: dryRun conferido, DELETE feito, `.data/` do Sidecar apagada
 - [ ] Parte A aplicada pelo Codex; `npm test` e `npm run build` passam; Sidecar reiniciado
 - [ ] segredo enviado ao Emanoel e cadastrado por ele (Parte B)
 - [ ] `.env.local` com o segredo da organização; Sidecar reiniciado (Parte B)

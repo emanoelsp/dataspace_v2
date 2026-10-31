@@ -21,7 +21,7 @@ export const M2M_OWNER_PREFIX = "urn:dataspace:participant:"
 
 export const M2M_CORS = {
   "Access-Control-Allow-Origin": "*",
-  "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+  "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type, X-M2M-Key, X-Sidecar-Secret, X-M2M-Admin-Key",
 }
 

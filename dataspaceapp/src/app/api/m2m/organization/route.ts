@@ -1,6 +1,8 @@
 /**
  * POST /api/m2m/organization — administrador define ou reseta o segredo do
  * Sidecar de uma organização M2M.
+ * DELETE /api/m2m/organization — a própria organização apaga tudo o que
+ * registrou via M2M (ver o DELETE abaixo).
  *
  * Usado para organizações que já tinham CPS antes do segredo por organização
  * (o register não deixa ninguém "assumir" essas organizações) e para quando o
@@ -14,10 +16,11 @@
  */
 
 import { NextResponse } from "next/server"
-import { FieldValue } from "firebase-admin/firestore"
+import { FieldValue, type DocumentReference, type Firestore } from "firebase-admin/firestore"
 import {
-  getDb, slugify, M2M_CORS, M2M_ORGS, adminKeyError,
+  getDb, slugify, M2M_CORS, M2M_ORGS, M2M_OWNER_PREFIX, adminKeyError, apiKeyError,
   generateSidecarSecret, isAcceptableSidecarSecret, encryptSidecarSecret,
+  decryptSidecarSecret, secretsMatch, sidecarSecretForParticipant, sidecarRevokeToken,
 } from "@/lib/m2m"
 
 export const runtime = "nodejs"
@@ -58,6 +61,151 @@ export async function POST(request: Request) {
     organization,
     reset: existed,
     ...(provided ? {} : { sidecarSecret, sidecarSecretNotice: "Shown only once." }),
+  }, { headers: M2M_CORS })
+}
+
+// [coleção, campo com o participantId] — tudo o que register e negotiate gravam
+const PURGE_TARGETS: Array<[string, string]> = [
+  ["connectorProfiles", "participantId"],
+  ["assets", "ownerId"],
+  ["federations", "ownerId"],
+  ["compliance", "ownerId"],
+  ["governance", "ownerId"],
+  ["contractOffers", "ownerId"],
+  ["federationMemberships", "participantId"],
+  ["connectorConnections", "providerParticipantId"],
+  ["connectorConnections", "consumerParticipantId"],
+  ["contractAgreements", "providerParticipantId"],
+  ["contractAgreements", "consumerParticipantId"],
+  ["credentialGrants", "ownerId"],
+  ["credentialGrants", "participantId"],
+  ["accessTokens", "providerId"],
+  ["accessTokens", "requesterId"],
+  ["accessRequests", "assetOwnerId"],
+  ["accessRequests", "requesterId"],
+]
+
+// partes de cada registro bilateral: se a outra parte é de outra organização,
+// o registro também é histórico dela — não é apagado (o token é revogado)
+const PARTY_FIELDS: Record<string, [string, string]> = {
+  connectorConnections: ["providerParticipantId", "consumerParticipantId"],
+  contractAgreements: ["providerParticipantId", "consumerParticipantId"],
+  credentialGrants: ["ownerId", "participantId"],
+  accessTokens: ["providerId", "requesterId"],
+  accessRequests: ["assetOwnerId", "requesterId"],
+}
+
+type Doc = { ref: DocumentReference; data: Record<string, unknown> }
+
+/** Documentos M2M da organização (prefixo urn:dataspace:participant:{org}:), por coleção. */
+async function collectOrgDocs(db: Firestore, orgSlug: string) {
+  const prefix = `${M2M_OWNER_PREFIX}${orgSlug}:`
+  const end = `${prefix.slice(0, -1)};`
+  const found = new Map<string, Map<string, Doc>>()
+  const shared = new Map<string, Map<string, Doc>>()
+  const add = (col: string, ref: DocumentReference, data: Record<string, unknown>) => {
+    // só o que veio do M2M: documentos do fluxo humano ficam intactos
+    if (data.source !== "m2m") return
+    const isShared = (PARTY_FIELDS[col] ?? []).some(f => !String(data[f] ?? "").startsWith(prefix))
+    const target = isShared ? shared : found
+    if (!target.has(col)) target.set(col, new Map())
+    target.get(col)!.set(ref.id, { ref, data })
+  }
+  await Promise.all(PURGE_TARGETS.map(async ([col, field]) => {
+    const snap = await db.collection(col).where(field, ">=", prefix).where(field, "<", end).get()
+    for (const d of snap.docs) add(col, d.ref, d.data() ?? {})
+  }))
+
+  // federação da organização com ativo de outra organização: mantém (senão o ativo alheio fica órfão)
+  const keptFederations: Array<{ id: string; name: string; foreignAssets: number }> = []
+  for (const fed of [...(found.get("federations")?.values() ?? [])]) {
+    const assets = await db.collection("assets").where("federationId", "==", fed.ref.id).get()
+    const foreign = assets.docs.filter(a => !String(a.data()?.ownerId ?? "").startsWith(prefix)).length
+    if (foreign > 0) {
+      found.get("federations")!.delete(fed.ref.id)
+      keptFederations.push({ id: fed.ref.id, name: String(fed.data.name ?? ""), foreignAssets: foreign })
+      for (const [id, c] of found.get("compliance") ?? []) if (c.data.federationId === fed.ref.id) found.get("compliance")!.delete(id)
+      continue
+    }
+    // adesões de outros participantes à federação que será apagada
+    const members = await db.collection("federationMemberships").where("federationId", "==", fed.ref.id).get()
+    for (const m of members.docs) add("federationMemberships", m.ref, m.data() ?? {})
+  }
+  return { found, shared, keptFederations }
+}
+
+/**
+ * DELETE /api/m2m/organization?organization=IFSC-GASPAR[&dryRun=true]
+ *
+ * Recomeçar do zero sem depender do administrador: apaga conectores, ativos,
+ * federações, compliance, governança, ofertas, adesões, conexões, acordos,
+ * credenciais, tokens e solicitações dos participantes M2M da organização, e
+ * por fim o próprio registro do segredo — o próximo register recria tudo.
+ * Tokens ativos são revogados nos Sidecars antes de apagar.
+ *
+ * Exige X-M2M-Key e o segredo da organização em X-Sidecar-Secret.
+ * dryRun=true só conta o que seria apagado.
+ */
+export async function DELETE(request: Request) {
+  const keyErr = apiKeyError(request)
+  if (keyErr) return NextResponse.json({ error: keyErr }, { status: 401, headers: M2M_CORS })
+
+  const params = new URL(request.url).searchParams
+  const organization = params.get("organization")?.trim() ?? ""
+  if (!organization) return NextResponse.json({ error: "Required query param: organization" }, { status: 400, headers: M2M_CORS })
+  const dryRun = params.get("dryRun") === "true"
+
+  const db = getDb()
+  if (!db) return NextResponse.json({ error: "Server credentials not configured" }, { status: 503, headers: M2M_CORS })
+
+  const orgSlug = slugify(organization)
+  const orgRef = db.collection(M2M_ORGS).doc(orgSlug)
+  const orgDoc = await orgRef.get()
+  if (!orgDoc.exists) {
+    return NextResponse.json({
+      error: `Organization "${organization}" has no sidecar secret. Ask the Dataspace admin to set it (POST /api/m2m/organization) before deleting.`,
+    }, { status: 404, headers: M2M_CORS })
+  }
+  const stored = decryptSidecarSecret(String(orgDoc.data()?.sidecarSecretEnc ?? ""))
+  if (!stored) return NextResponse.json({ error: "Sidecar secret store unavailable (SIDECAR_SECRETS_KEY)" }, { status: 503, headers: M2M_CORS })
+  const provided = (request.headers.get("x-sidecar-secret") ?? "").trim()
+  if (!provided || !secretsMatch(provided, stored)) {
+    return NextResponse.json({ error: "Missing or invalid X-Sidecar-Secret header." }, { status: 403, headers: M2M_CORS })
+  }
+
+  const { found, shared, keptFederations } = await collectOrgDocs(db, orgSlug)
+  const tally = (m: Map<string, Map<string, Doc>>) => Object.fromEntries([...m].map(([col, docs]) => [col, docs.size]))
+  const counts = tally(found)
+  const keptShared = tally(shared)
+
+  if (dryRun) {
+    return NextResponse.json({ ok: true, organization, dryRun: true, wouldDelete: counts, keptShared, keptFederations }, { headers: M2M_CORS })
+  }
+
+  const activeTokens = [...(found.get("accessTokens")?.values() ?? []), ...(shared.get("accessTokens")?.values() ?? [])]
+    .filter(t => t.data.status === "active")
+  const revoked = await Promise.all(activeTokens.map(async t => {
+    const secret = t.data.sidecarTokenId && t.data.sidecarEndpoint
+      ? await sidecarSecretForParticipant(db, String(t.data.providerId ?? "")).catch(() => null)
+      : null
+    return secret ? sidecarRevokeToken(String(t.data.sidecarEndpoint), String(t.data.sidecarTokenId), secret) : false
+  }))
+  // registros compartilhados ficam como histórico da outra parte, com o token revogado
+  await Promise.all([...(shared.get("accessTokens")?.values() ?? [])]
+    .filter(t => t.data.status === "active")
+    .map(t => t.ref.set({ status: "revoked", revokedAt: FieldValue.serverTimestamp(), revokedReason: "organization-deleted" }, { merge: true })))
+
+  for (const docs of found.values()) await Promise.all([...docs.values()].map(d => d.ref.delete()))
+  await orgRef.delete()
+
+  return NextResponse.json({
+    ok: true,
+    organization,
+    deleted: { ...counts, m2mOrganizations: 1 },
+    keptShared,
+    keptFederations,
+    revokedTokens: revoked.filter(Boolean).length,
+    next: "Clear the Sidecar .data/ folder, then POST /api/m2m/register again: the first register sets a new sidecar secret.",
   }, { headers: M2M_CORS })
 }
 
