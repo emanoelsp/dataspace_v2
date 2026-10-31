@@ -907,8 +907,11 @@ continuam válidos; só as URLs mudam.
 - O primeiro register de uma organização **nova** define o segredo dela
   (confiança no primeiro uso). Organizações cujo prefixo de id já é usado (por
   CPS M2M ou por conectores/ativos/federações do fluxo humano) só recebem segredo
-  pelo administrador (`/api/m2m/organization`, `M2M_ADMIN_KEY`). A checagem lê
-  as coleções inteiras — adequada à escala da PoC.
+  pelo administrador (`/api/m2m/organization`, `M2M_ADMIN_KEY`). Limitação
+  conhecida: um usuário da interface pode gravar um `participantId` com o prefixo
+  de uma organização e bloquear o claim dela pelo register — o admin resolve
+  pela rota acima (o usuário não ganha acesso, pois a identidade M2M exige
+  conector criado pelo servidor).
 - A identidade M2M é por organização: quem tem o segredo da organização age por
   qualquer `participantId` dela.
 - O trecho LAN Sidecar → CPS usa o token fixo `demo`, que os CPS aceitam mesmo

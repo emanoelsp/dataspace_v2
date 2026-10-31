@@ -388,17 +388,20 @@ export async function participantSecretMatches(db: Firestore, participantId: str
 /**
  * Algum conector, ativo ou federação (de qualquer origem, inclusive o fluxo
  * humano) já usa ids urn:dataspace:participant:{org}:* — então a organização
- * não pode ser assumida pelo primeiro register.
+ * não pode ser assumida pelo primeiro register. Uma leitura por coleção
+ * (consulta de intervalo no prefixo, limit 1).
  */
 export async function orgNamespaceInUse(db: Firestore, organization: string): Promise<boolean> {
   const prefix = `${M2M_OWNER_PREFIX}${slugify(organization)}:`
-  const [connectors, assets, federations] = await Promise.all([
-    db.collection("connectorProfiles").get(),
-    db.collection("assets").get(),
-    db.collection("federations").get(),
+  const end = `${prefix}\uf8ff`
+  const used = (col: string, field: string) =>
+    db.collection(col).where(field, ">=", prefix).where(field, "<=", end).limit(1).get().then(s => !s.empty)
+  const hits = await Promise.all([
+    used("connectorProfiles", "participantId"),
+    used("assets", "ownerId"),
+    used("federations", "ownerId"),
   ])
-  return connectors.docs.some(d => String(d.data()?.participantId ?? "").startsWith(prefix))
-    || [...assets.docs, ...federations.docs].some(d => String(d.data()?.ownerId ?? "").startsWith(prefix))
+  return hits.some(Boolean)
 }
 
 /** Conectores M2M de uma organização (participantId urn:dataspace:participant:{org}:*). */
