@@ -4,6 +4,9 @@
 > `IFSC-GASPAR-2`, `IFSC-GASPAR-v2`, federações IFSC, IFSC2 e ifscv2) foram
 > apagadas pelo administrador. O ambiente começa do zero: o primeiro register
 > cria a organização e o segredo dela, sem precisar do Emanoel.
+>
+> **A `M2M_API_KEY` foi trocada em 31/10/2026.** A chave antiga recebe `401`.
+> A nova foi enviada pelo Emanoel por canal privado — configure como na Parte B.0.
 
 O Dataspace passou a suportar o que faltava na integração:
 
@@ -121,6 +124,31 @@ Ao final, liste os arquivos alterados e confirme que os ajustes locais do fork
 ````
 
 Depois que o Codex terminar: `npm test`, `npm run build` e reinicie o Sidecar.
+
+---
+
+## Parte B.0 — Chave da API M2M (`M2M_API_KEY`)
+
+Todas as chamadas ao Dataspace (`register`, `negotiate`, `agreement`,
+`sidecar-endpoint`, `DELETE`) exigem o header `X-M2M-Key`. A chave é a mesma
+para todos os participantes e é enviada pelo Emanoel por canal privado.
+
+Ela **não vai no Sidecar**: vai no programa que chama a API do Dataspace (a
+ACSM, os scripts do Codex). Coloque no `.env` desse cliente:
+
+```bash
+M2M_API_KEY=<chave enviada pelo Emanoel>
+```
+
+e faça o código ler dessa variável para montar o header
+`X-M2M-Key: ${M2M_API_KEY}`. Não commite o `.env`. Teste rápido (deve responder
+`404`, organização inexistente — `401` significa chave errada):
+
+```bash
+curl -s -o /dev/null -w "%{http_code}\n" -X DELETE \
+  "https://dataspace-v2.vercel.app/api/m2m/organization?organization=teste-chave" \
+  -H "X-M2M-Key: $M2M_API_KEY"
+```
 
 ---
 
@@ -310,6 +338,7 @@ histórico da outra parte); os tokens deles são revogados.
 
 ## Checklist
 
+- [ ] `M2M_API_KEY` nova no `.env` do cliente (ACSM/scripts); teste da Parte B.0 responde `404`
 - [ ] (se for recomeçar) Parte E: dryRun conferido, DELETE feito, `.data/` do Sidecar apagada
 - [ ] Parte A aplicada pelo Codex; `npm test` e `npm run build` passam; Sidecar reiniciado
 - [ ] `.env.local` com o segredo da organização; Sidecar reiniciado (Parte B)
