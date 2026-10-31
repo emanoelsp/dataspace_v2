@@ -20,7 +20,7 @@ import { FieldValue, type DocumentReference, type Firestore } from "firebase-adm
 import {
   getDb, slugify, M2M_CORS, M2M_ORGS, M2M_OWNER_PREFIX, adminKeyError, apiKeyError,
   generateSidecarSecret, isAcceptableSidecarSecret, encryptSidecarSecret,
-  decryptSidecarSecret, secretsMatch, sidecarSecretForProvider, sidecarRevokeToken,
+  decryptSidecarSecret, secretsMatch, sidecarSecretForParticipant, sidecarRevokeToken,
 } from "@/lib/m2m"
 
 export const runtime = "nodejs"
@@ -196,7 +196,9 @@ export async function DELETE(request: Request) {
   let revokedInSidecar = 0
   await Promise.all(activeTokens.map(async t => {
     if (!t.data.sidecarTokenId) return
-    const secret = await sidecarSecretForProvider(db, String(t.data.providerId ?? ""))
+    // só o segredo da organização M2M do provedor: o segredo global nunca vai a uma
+    // URL lida do token (token de provedor do fluxo humano expira pelo TTL)
+    const secret = await sidecarSecretForParticipant(db, String(t.data.providerId ?? "")).catch(() => null)
     const ok = secret && t.data.sidecarEndpoint
       ? await sidecarRevokeToken(String(t.data.sidecarEndpoint), String(t.data.sidecarTokenId), secret)
       : false
@@ -208,6 +210,14 @@ export async function DELETE(request: Request) {
   // registros compartilhados ficam como histórico da outra parte, mas encerrados:
   // quem registrar de novo o mesmo nome (mesmos participantIds) não os herda ativos
   const ts = FieldValue.serverTimestamp()
+  // só registros ainda permissivos: "revoked"/"rejected" do provedor ficam como estão
+  const OPEN_STATES: Record<string, string[]> = {
+    accessTokens: ["active"],
+    contractAgreements: ["finalized", "active", "pending"],
+    credentialGrants: ["active"],
+    connectorConnections: ["active", "pending"],
+    accessRequests: ["pending"],
+  }
   const closing: Record<string, Record<string, unknown>> = {
     accessTokens: { status: "revoked", revokedAt: ts, revokedReason: "organization-deleted" },
     contractAgreements: { status: "terminated", terminatedAt: ts, terminatedReason: "organization-deleted" },
@@ -216,7 +226,7 @@ export async function DELETE(request: Request) {
     accessRequests: { status: "cancelled", updatedAt: ts },
   }
   await Promise.all([...shared].flatMap(([col, docs]) => [...docs.values()]
-    .filter(d => !(col === "accessTokens" && (d.data.status !== "active" || unrevoked.has(d.ref.id))))
+    .filter(d => (OPEN_STATES[col] ?? []).includes(String(d.data.status ?? "")) && !unrevoked.has(d.ref.id))
     .map(d => d.ref.set(closing[col], { merge: true }))))
 
   for (const docs of found.values()) await Promise.all([...docs.values()].map(d => d.ref.delete()))

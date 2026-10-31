@@ -236,6 +236,13 @@ describe("offer → negotiate → agreement", () => {
     expect(sidecarCalls).toHaveLength(0)
   })
 
+  it("refuses when any connection was revoked by the provider, even next to a closed one", async () => {
+    const provider = String(store.docs("assets").get(assetId)?.ownerId)
+    await store.collection("connectorConnections").doc("cc-closed").set({ providerParticipantId: provider, consumerParticipantId: CONSUMER, status: "closed", source: "m2m" })
+    await store.collection("connectorConnections").doc("cc-revoked").set({ providerParticipantId: provider, consumerParticipantId: CONSUMER, status: "revoked", source: "m2m" })
+    expect((await negotiate({ targetAssetId: assetId })).res.status).toBe(403)
+  })
+
   it("does not reuse a connection closed when an organization was deleted", async () => {
     const provider = String(store.docs("assets").get(assetId)?.ownerId)
     await store.collection("connectorConnections").doc("cc-closed").set({

@@ -275,17 +275,6 @@ export async function sidecarSecretForParticipant(db: Firestore, participantId: 
   return secret
 }
 
-/**
- * Segredo com que o token foi empurrado ao Sidecar do provedor (o mesmo critério
- * do negotiate): o da organização M2M, ou o global para provedor do fluxo humano.
- * Provedor M2M sem segredo próprio → null (nunca enviar o global a URL de M2M).
- */
-export async function sidecarSecretForProvider(db: Firestore, providerId: string): Promise<string | null> {
-  const own = await sidecarSecretForParticipant(db, providerId).catch(() => null)
-  if (own) return own
-  return providerId.startsWith(M2M_OWNER_PREFIX) ? null : SIDECAR_ADMIN_SECRET
-}
-
 // ── Recursos de dados de um CPS (ex.: 5 catálogos na mesma API) ───────────
 
 export type M2MResource = { id: string; name: string; path: string; description?: string; semanticId?: string }

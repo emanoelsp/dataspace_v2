@@ -59,7 +59,7 @@ beforeEach(async () => {
   })
 
   // contrato com outra organização: histórico dela, fica (token revogado)
-  await seed("contractAgreements", "ag-shared", { providerParticipantId: OTHER, consumerParticipantId: LAI1 })
+  await seed("contractAgreements", "ag-shared", { providerParticipantId: OTHER, consumerParticipantId: LAI1, status: "finalized" })
   await seed("accessTokens", "t-shared", {
     providerId: OTHER, requesterId: LAI1, status: "active", sidecarTokenId: "sc-2", sidecarEndpoint: OTHER_SIDECAR,
   })
@@ -209,15 +209,15 @@ describe("DELETE /api/m2m/organization", () => {
     expect(has("assets", "a1")).toBe(true)
   })
 
-  it("revokes a token from a human-flow provider with the global sidecar secret", async () => {
+  it("never sends the global sidecar secret: a human-flow provider token stays active and is reported", async () => {
     await seed("accessTokens", "t-human", {
       providerId: "firebase-uid-123", requesterId: LAI1, status: "active", sidecarTokenId: "sc-h", sidecarEndpoint: "http://plant-ui:3100",
     })
     const { DELETE } = await import("./route")
     const j = await (await DELETE(del("organization=IFSC-GASPAR"))).json()
-    expect(sidecarCalls).toContainEqual({ url: "http://plant-ui:3100/api/tokens/sc-h", auth: "Bearer admin" })
-    expect(store.docs("accessTokens").get("t-human")?.status).toBe("revoked")
-    expect(j.unrevokedTokens).toEqual([])
+    expect(sidecarCalls.some(c => c.url.startsWith("http://plant-ui:3100"))).toBe(false)
+    expect(store.docs("accessTokens").get("t-human")?.status).toBe("active")
+    expect(j.unrevokedTokens.map((t: { id: string }) => t.id)).toContain("t-human")
   })
 
   it("keeps the organization secret when a federation is kept, so it can register again", async () => {
@@ -237,6 +237,15 @@ describe("DELETE /api/m2m/organization", () => {
     expect(store.docs("contractAgreements").get("ag-shared")?.status).toBe("terminated")
     expect(store.docs("credentialGrants").get("cg-shared")?.status).toBe("revoked")
     expect(store.docs("connectorConnections").get("cc-shared")?.status).toBe("closed")
+  })
+
+  it("keeps provider-side revoked/rejected records as they are", async () => {
+    await seed("connectorConnections", "cc-revoked", { providerParticipantId: OTHER, consumerParticipantId: LAI1, status: "revoked" })
+    await seed("accessRequests", "ar-rejected", { assetOwnerId: OTHER, requesterId: LAI1, status: "rejected" })
+    const { DELETE } = await import("./route")
+    await DELETE(del("organization=IFSC-GASPAR"))
+    expect(store.docs("connectorConnections").get("cc-revoked")?.status).toBe("revoked")
+    expect(store.docs("accessRequests").get("ar-rejected")?.status).toBe("rejected")
   })
 
   it("rejects an organization name without letters or digits", async () => {

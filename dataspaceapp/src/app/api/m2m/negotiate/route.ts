@@ -216,16 +216,17 @@ export async function POST(request: Request) {
   }
 
   // ── 3) conexão entre conectores ──
-  // conexão "closed" (organização apagada e registrada de novo) não é reaproveitada
+  // qualquer conexão revogada/rejeitada pelo provedor bloqueia; "closed" (organização
+  // apagada e registrada de novo) não é reaproveitada
   const connSnap = await db.collection("connectorConnections")
     .where("providerParticipantId", "==", providerId).where("consumerParticipantId", "==", consumer).get()
+  const blocked = connSnap.docs.find(d => ["revoked", "rejected"].includes(String(d.data()?.status ?? "")))
+  if (blocked) {
+    return NextResponse.json({ error: `Connector connection ${blocked.data()?.status} by the provider.` }, { status: 403, headers: CORS })
+  }
   const existingConn = connSnap.docs.find(d => d.data()?.status !== "closed")
   let connectionId: string
   if (existingConn) {
-    const status = String(existingConn.data()?.status ?? "")
-    if (status === "revoked" || status === "rejected") {
-      return NextResponse.json({ error: `Connector connection ${status} by the provider.` }, { status: 403, headers: CORS })
-    }
     connectionId = existingConn.id
     steps.push({ step: "connector-connection", id: connectionId, status: "reused" })
   } else {
