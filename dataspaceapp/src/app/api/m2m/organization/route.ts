@@ -143,12 +143,16 @@ async function collectOrgDocs(db: Firestore, orgSlug: string) {
  * por fim o próprio registro do segredo — o próximo register recria tudo.
  * Tokens ativos são revogados nos Sidecars antes de apagar.
  *
- * Exige X-M2M-Key e o segredo da organização em X-Sidecar-Secret.
- * dryRun=true só conta o que seria apagado.
+ * Exige X-M2M-Key e o segredo da organização em X-Sidecar-Secret — ou
+ * X-M2M-Admin-Key, que também apaga organizações sem segredo (anteriores ao
+ * segredo por organização). dryRun=true só conta o que seria apagado.
  */
 export async function DELETE(request: Request) {
-  const keyErr = apiKeyError(request)
-  if (keyErr) return NextResponse.json({ error: keyErr }, { status: 401, headers: M2M_CORS })
+  const asAdmin = request.headers.has("x-m2m-admin-key")
+  const authErr: [string, number] | null = asAdmin
+    ? adminKeyError(request)
+    : (k => (k ? [k, 401] : null))(apiKeyError(request))
+  if (authErr) return NextResponse.json({ error: authErr[0] }, { status: authErr[1], headers: M2M_CORS })
 
   const params = new URL(request.url).searchParams
   const organization = params.get("organization")?.trim() ?? ""
@@ -160,17 +164,19 @@ export async function DELETE(request: Request) {
 
   const orgSlug = slugify(organization)
   const orgRef = db.collection(M2M_ORGS).doc(orgSlug)
-  const orgDoc = await orgRef.get()
-  if (!orgDoc.exists) {
-    return NextResponse.json({
-      error: `Organization "${organization}" has no sidecar secret. Ask the Dataspace admin to set it (POST /api/m2m/organization) before deleting.`,
-    }, { status: 404, headers: M2M_CORS })
-  }
-  const stored = decryptSidecarSecret(String(orgDoc.data()?.sidecarSecretEnc ?? ""))
-  if (!stored) return NextResponse.json({ error: "Sidecar secret store unavailable (SIDECAR_SECRETS_KEY)" }, { status: 503, headers: M2M_CORS })
-  const provided = (request.headers.get("x-sidecar-secret") ?? "").trim()
-  if (!provided || !secretsMatch(provided, stored)) {
-    return NextResponse.json({ error: "Missing or invalid X-Sidecar-Secret header." }, { status: 403, headers: M2M_CORS })
+  if (!asAdmin) {
+    const orgDoc = await orgRef.get()
+    if (!orgDoc.exists) {
+      return NextResponse.json({
+        error: `Organization "${organization}" has no sidecar secret. Ask the Dataspace admin to delete it (X-M2M-Admin-Key) or to set the secret (POST /api/m2m/organization).`,
+      }, { status: 404, headers: M2M_CORS })
+    }
+    const stored = decryptSidecarSecret(String(orgDoc.data()?.sidecarSecretEnc ?? ""))
+    if (!stored) return NextResponse.json({ error: "Sidecar secret store unavailable (SIDECAR_SECRETS_KEY)" }, { status: 503, headers: M2M_CORS })
+    const provided = (request.headers.get("x-sidecar-secret") ?? "").trim()
+    if (!provided || !secretsMatch(provided, stored)) {
+      return NextResponse.json({ error: "Missing or invalid X-Sidecar-Secret header." }, { status: 403, headers: M2M_CORS })
+    }
   }
 
   const { found, shared, keptFederations } = await collectOrgDocs(db, orgSlug)
@@ -182,17 +188,23 @@ export async function DELETE(request: Request) {
     return NextResponse.json({ ok: true, organization, dryRun: true, wouldDelete: counts, keptShared, keptFederations }, { headers: M2M_CORS })
   }
 
+  // só some do Dataspace o token que o Sidecar confirmou revogado; sem sidecarTokenId
+  // o token nunca chegou ao Sidecar. Falhou: fica "active" e volta em unrevokedTokens.
   const activeTokens = [...(found.get("accessTokens")?.values() ?? []), ...(shared.get("accessTokens")?.values() ?? [])]
     .filter(t => t.data.status === "active")
-  const revoked = await Promise.all(activeTokens.map(async t => {
-    const secret = t.data.sidecarTokenId && t.data.sidecarEndpoint
-      ? await sidecarSecretForParticipant(db, String(t.data.providerId ?? "")).catch(() => null)
-      : null
-    return secret ? sidecarRevokeToken(String(t.data.sidecarEndpoint), String(t.data.sidecarTokenId), secret) : false
+  const unrevoked = new Set<string>()
+  await Promise.all(activeTokens.map(async t => {
+    if (!t.data.sidecarTokenId) return
+    const secret = await sidecarSecretForParticipant(db, String(t.data.providerId ?? "")).catch(() => null)
+    const ok = secret && t.data.sidecarEndpoint
+      ? await sidecarRevokeToken(String(t.data.sidecarEndpoint), String(t.data.sidecarTokenId), secret)
+      : false
+    if (!ok) unrevoked.add(t.ref.id)
   }))
+  found.get("accessTokens")?.forEach((_, id) => { if (unrevoked.has(id)) found.get("accessTokens")!.delete(id) })
   // registros compartilhados ficam como histórico da outra parte, com o token revogado
   await Promise.all([...(shared.get("accessTokens")?.values() ?? [])]
-    .filter(t => t.data.status === "active")
+    .filter(t => t.data.status === "active" && !unrevoked.has(t.ref.id))
     .map(t => t.ref.set({ status: "revoked", revokedAt: FieldValue.serverTimestamp(), revokedReason: "organization-deleted" }, { merge: true })))
 
   for (const docs of found.values()) await Promise.all([...docs.values()].map(d => d.ref.delete()))
@@ -201,10 +213,14 @@ export async function DELETE(request: Request) {
   return NextResponse.json({
     ok: true,
     organization,
-    deleted: { ...counts, m2mOrganizations: 1 },
+    deleted: { ...tally(found), m2mOrganizations: 1 },
     keptShared,
     keptFederations,
-    revokedTokens: revoked.filter(Boolean).length,
+    revokedTokens: activeTokens.length - unrevoked.size,
+    // Sidecar fora do ar: o token segue válido nele até expiresAt
+    unrevokedTokens: activeTokens.filter(t => unrevoked.has(t.ref.id)).map(t => ({
+      id: t.ref.id, sidecarEndpoint: String(t.data.sidecarEndpoint ?? ""), equipmentSlug: String(t.data.equipmentSlug ?? ""),
+    })),
     next: "Clear the Sidecar .data/ folder, then POST /api/m2m/register again: the first register sets a new sidecar secret.",
   }, { headers: M2M_CORS })
 }

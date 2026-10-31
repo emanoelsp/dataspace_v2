@@ -897,7 +897,9 @@ zero sem depender do administrador.
 | `organization` | sim | a mesma `organization` do register (maiúsculas não importam) |
 | `dryRun` | não | `true` só conta o que seria apagado |
 
-Headers: `X-M2M-Key` e `X-Sidecar-Secret` (o segredo da organização).
+Headers: `X-M2M-Key` e `X-Sidecar-Secret` (o segredo da organização). O
+administrador pode usar só `X-M2M-Admin-Key`, que também apaga organizações sem
+segredo cadastrado (anteriores ao segredo por organização).
 
 ```bash
 # 1) simulação: o que seria apagado
@@ -910,6 +912,9 @@ curl -X DELETE "https://dataspace-v2.vercel.app/api/m2m/organization?organizatio
   -H "X-M2M-Key: <M2M_API_KEY>" \
   -H "X-Sidecar-Secret: <segredo da organização>"
 ```
+
+Se algum Sidecar não confirmar a revogação, o token não é apagado nem marcado
+`revoked`: volta em `unrevokedTokens` e segue válido nele até expirar.
 
 Resposta (200):
 
@@ -951,7 +956,7 @@ para limpar o lado local.
 | `400 Required query param: organization` | falta `?organization=` |
 | `401 Missing or invalid X-M2M-Key header.` | header ausente ou errado |
 | `403 Missing or invalid X-Sidecar-Secret header.` | segredo ausente ou errado |
-| `404 Organization "…" has no sidecar secret…` | organização sem segredo: o admin define antes (`POST /api/m2m/organization`) |
+| `404 Organization "…" has no sidecar secret…` | organização sem segredo: o admin apaga com `X-M2M-Admin-Key` |
 
 ---
 

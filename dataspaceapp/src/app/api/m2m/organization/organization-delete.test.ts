@@ -34,6 +34,7 @@ function del(query: string, headers: Record<string, string> = { "X-Sidecar-Secre
 }
 
 let sidecarCalls: Array<{ url: string; auth: string }>
+let downSidecars: string[]
 
 beforeEach(async () => {
   for (const col of COLS) store.docs(col).clear()
@@ -69,15 +70,19 @@ beforeEach(async () => {
   await seed("connectorProfiles", "c-ui", { participantId: "urn:dataspace:participant:ifsc-gaspar:ui-made", source: "ui" })
 
   sidecarCalls = []
+  downSidecars = []
   vi.stubGlobal("fetch", vi.fn(async (url: string, init: RequestInit) => {
     sidecarCalls.push({ url, auth: (init.headers as Record<string, string>).Authorization })
-    return new Response("{}", { status: 200 })
+    return new Response("{}", { status: downSidecars.some(s => url.startsWith(s)) ? 502 : 200 })
   }))
 })
+
+const ADMIN_KEY = "admin-key-0123456789abcdef0123456789abcdef"
 
 afterEach(() => {
   vi.unstubAllGlobals()
   delete process.env.M2M_API_KEY
+  delete process.env.M2M_ADMIN_KEY
 })
 
 describe("DELETE /api/m2m/organization", () => {
@@ -140,6 +145,19 @@ describe("DELETE /api/m2m/organization", () => {
     ]))
   })
 
+  it("keeps tokens the sidecar did not confirm as revoked and reports them", async () => {
+    downSidecars = [SIDECAR, OTHER_SIDECAR]
+    const { DELETE } = await import("./route")
+    const j = await (await DELETE(del("organization=IFSC-GASPAR"))).json()
+    expect(has("accessTokens", "t-internal")).toBe(true)
+    expect(store.docs("accessTokens").get("t-internal")?.status).toBe("active")
+    expect(store.docs("accessTokens").get("t-shared")?.status).toBe("active")
+    expect(j.revokedTokens).toBe(0)
+    expect(j.unrevokedTokens.map((t: { id: string }) => t.id).sort()).toEqual(["t-internal", "t-shared"])
+    expect(j.deleted.accessTokens ?? 0).toBe(0)
+    expect(has("assets", "a1")).toBe(false)
+  })
+
   it("keeps an own federation that holds another organization's asset", async () => {
     await seed("assets", "a-foreign-in-f1", { ownerId: OTHER, federationId: "f1" })
     const { DELETE } = await import("./route")
@@ -166,5 +184,28 @@ describe("DELETE /api/m2m/organization", () => {
     }))
     expect(res.status).toBe(200)
     expect(has("m2mOrganizations", "ifsc-gaspar")).toBe(true)
+  })
+
+  it("admin key deletes a legacy organization that has no sidecar secret", async () => {
+    process.env.M2M_ADMIN_KEY = ADMIN_KEY
+    store.docs("m2mOrganizations").delete("ifsc-gaspar")
+    const { DELETE } = await import("./route")
+    expect((await DELETE(del("organization=IFSC-GASPAR"))).status).toBe(404)
+    expect((await DELETE(del("organization=IFSC-GASPAR", { "X-M2M-Admin-Key": "wrong-key-0123456789abcdef0123456789" }))).status).toBe(401)
+    expect(has("assets", "a1")).toBe(true)
+
+    const res = await DELETE(del("organization=IFSC-GASPAR", { "X-M2M-Admin-Key": ADMIN_KEY }))
+    expect(res.status).toBe(200)
+    expect(has("assets", "a1")).toBe(false)
+    expect(has("federations", "f1")).toBe(false)
+    expect(has("assets", "a-other")).toBe(true)
+    expect(has("connectorProfiles", "c-ui")).toBe(true)
+  })
+
+  it("admin route stays closed when M2M_ADMIN_KEY is weak", async () => {
+    process.env.M2M_ADMIN_KEY = "admin"
+    const { DELETE } = await import("./route")
+    expect((await DELETE(del("organization=IFSC-GASPAR", { "X-M2M-Admin-Key": "admin" }))).status).toBe(503)
+    expect(has("assets", "a1")).toBe(true)
   })
 })
