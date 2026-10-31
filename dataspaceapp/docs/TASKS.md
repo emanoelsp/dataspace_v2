@@ -37,6 +37,7 @@
   - `GET /api/equipment/press` — Prensa Hidráulica (AAS + ECLASS `0173-1#01-ADN573#001`)
 - [x] Cada rota de equipamento: token PEP validation, 3 submodelos (Nameplate/TechnicalData/OperationalData), dados em tempo real
 - [x] `src/lib/equipment-aas.ts` — utilitários AAS/ECLASS compartilhados
+- [x] `POST /api/m2m/sidecar-endpoint` — troca a URL do Sidecar (túnel efêmero) de todos os CPS M2M de uma organização e re-registra cada CPS no novo Sidecar
 
 ## Em andamento
 

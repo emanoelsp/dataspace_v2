@@ -36,6 +36,13 @@ const INTERFACES = [
     returns: { participantId: "urn:...", assetId: "...", federation: { id: "...", admissionMode: "..." }, dataUrl: "..." },
   },
   {
+    name: "update sidecar endpoint",
+    method: "POST", path: "/api/m2m/sidecar-endpoint",
+    description: "Troca a URL pública do Sidecar (ex.: túnel cloudflared reiniciado) para todos os CPS M2M da organização, ou só um slug, e re-registra cada CPS no novo Sidecar.",
+    body: { organization: "plant1", sidecarEndpoint: "https://nova-url.trycloudflare.com", equipmentSlug: "(opcional) oven" },
+    returns: { ok: true, updated: { connectors: 1, federations: 1, assets: 1, accessTokens: 0 }, equipment: [{ equipmentSlug: "oven", sidecarRegistered: true }], sidecarRegistered: true },
+  },
+  {
     name: "discover (UDDI)",
     method: "GET", path: "/api/m2m/discover",
     description: "Descoberta de ativos por serviço/capacidade. Só metadados; não retorna dados crus.",
