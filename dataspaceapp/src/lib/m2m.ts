@@ -393,9 +393,10 @@ export async function participantSecretMatches(db: Firestore, participantId: str
  */
 export async function orgNamespaceInUse(db: Firestore, organization: string): Promise<boolean> {
   const prefix = `${M2M_OWNER_PREFIX}${slugify(organization)}:`
-  const end = `${prefix}\uf8ff`
+  // o prefixo termina em ":"; "< …;" cobre qualquer continuação (";" é o caractere seguinte)
+  const end = `${prefix.slice(0, -1)};`
   const used = (col: string, field: string) =>
-    db.collection(col).where(field, ">=", prefix).where(field, "<=", end).limit(1).get().then(s => !s.empty)
+    db.collection(col).where(field, ">=", prefix).where(field, "<", end).limit(1).get().then(s => !s.empty)
   const hits = await Promise.all([
     used("connectorProfiles", "participantId"),
     used("assets", "ownerId"),

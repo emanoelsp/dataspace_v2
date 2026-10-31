@@ -127,11 +127,20 @@ describe("register — sidecar secret per organization", () => {
   })
 
   it("does not let anyone claim an organization whose ids are already used by the UI flow", async () => {
-    await store.collection("connectorProfiles").doc("human").set({
-      source: "ui", participantId: "urn:dataspace:participant:ifsc-gaspar:lab-user",
+    // continuação acima de U+F8FF: o limite superior da consulta tem de cobri-la
+    for (const participantId of ["urn:dataspace:participant:ifsc-gaspar:lab-user", "urn:dataspace:participant:ifsc-gaspar:\uffefx"]) {
+      store.clear()
+      await store.collection("connectorProfiles").doc("human").set({ source: "ui", participantId })
+      expect((await register({}, { "X-Sidecar-Secret": OWN_SECRET })).res.status).toBe(403)
+      expect(store.docs("m2mOrganizations").size).toBe(0)
+    }
+  })
+
+  it("does not treat a longer organization name as the same namespace", async () => {
+    await store.collection("connectorProfiles").doc("other").set({
+      source: "m2m", participantId: "urn:dataspace:participant:ifsc-gaspar2:cps",
     })
-    expect((await register({}, { "X-Sidecar-Secret": OWN_SECRET })).res.status).toBe(403)
-    expect(store.docs("m2mOrganizations").size).toBe(0)
+    expect((await register({}, { "X-Sidecar-Secret": OWN_SECRET })).res.status).toBe(200)
   })
 
   it("lets only one of two concurrent first registers claim the organization", async () => {

@@ -41,6 +41,7 @@ class Query {
       if (op === "array-contains") return Array.isArray(v) && v.includes(value)
       if (op === ">=") return typeof v === "string" && v >= String(value)
       if (op === "<=") return typeof v === "string" && v <= String(value)
+      if (op === "<") return typeof v === "string" && v < String(value)
       return true
     })
     return this
