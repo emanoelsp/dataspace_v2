@@ -1,5 +1,10 @@
 # Atualização do Sidecar e do fluxo M2M — Marcos (ACSM-PPU-LAI)
 
+> **31/10/2026:** as organizações experimentais antigas (`IFSC-GASPAR`,
+> `IFSC-GASPAR-2`, `IFSC-GASPAR-v2`, federações IFSC, IFSC2 e ifscv2) foram
+> apagadas pelo administrador. O ambiente começa do zero: o primeiro register
+> cria a organização e o segredo dela, sem precisar do Emanoel.
+
 O Dataspace passou a suportar o que faltava na integração:
 
 1. **5 recursos por CPS** — cada CPS é registrado uma vez, com a lista de
@@ -128,24 +133,22 @@ escolhe o valor:
 openssl rand -hex 32
 ```
 
-1. **Mande o valor ao Emanoel por canal privado.** A IFSC-GASPAR já tem CPS
-   cadastrados, então o register não deixa ninguém "assumir" a organização: o
-   Emanoel cadastra o teu segredo como administrador
-   (`POST /api/m2m/organization`). Espere a confirmação dele.
-2. Coloque no `.env.local` do Sidecar:
+1. Coloque no `.env.local` do Sidecar:
 
    ```bash
    SIDECAR_ADMIN_SECRET=<o valor gerado>
    ```
 
-3. Reinicie o Sidecar (o Next.js só lê o `.env.local` na subida).
-4. Envie **o mesmo valor** no header `X-Sidecar-Secret` em todo `register`,
-   `sidecar-endpoint`, `negotiate` e `agreement`.
+2. Reinicie o Sidecar (o Next.js só lê o `.env.local` na subida).
+3. Envie **o mesmo valor** no header `X-Sidecar-Secret` em todo `register`,
+   `sidecar-endpoint`, `negotiate`, `agreement` e no `DELETE` da Parte E. O
+   **primeiro register** da organização grava esse valor como o segredo dela —
+   não precisa mandar nada ao Emanoel.
 
 Sem o header certo, essas chamadas recebem `403` — ninguém mais consegue
 redirecionar os teus CPS nem negociar em nome da IFSC-GASPAR.
 
-> Guarde o valor. Se perder, o Emanoel reseta pela mesma rota de administrador.
+> Guarde o valor e não compartilhe. Se perder, o Emanoel reseta como administrador.
 
 ---
 
@@ -196,8 +199,6 @@ Registre também a **ACSM como consumidora**, para ter um `participantId`
 (ex.: `"equipmentSlug": "acsm"`, sem `resources` se ela não expõe dados). Na
 mesma organização, ela usa o mesmo segredo.
 
-> Os ativos antigos (um por recurso) continuam no catálogo; podem ser ignorados.
-> O Emanoel remove depois.
 
 ---
 
@@ -279,8 +280,8 @@ Atualiza os 3 CPS de uma vez; tokens já emitidos continuam válidos.
 ## Parte E — Recomeçar do zero (apagar tudo)
 
 Para remover tudo o que a IFSC-GASPAR registrou (CPS, federações, contratos,
-tokens) e refazer as Partes C e D do zero. Precisa do segredo da organização
-(Parte B).
+tokens) e refazer as Partes C e D do zero, quando quiser. Só precisa do
+segredo da organização (o mesmo do `.env.local`, Parte B) — sem chave de admin.
 
 ```bash
 # 1) simulação: lista quantos documentos seriam apagados, sem apagar
@@ -311,7 +312,6 @@ histórico da outra parte); os tokens deles são revogados.
 
 - [ ] (se for recomeçar) Parte E: dryRun conferido, DELETE feito, `.data/` do Sidecar apagada
 - [ ] Parte A aplicada pelo Codex; `npm test` e `npm run build` passam; Sidecar reiniciado
-- [ ] segredo enviado ao Emanoel e cadastrado por ele (Parte B)
 - [ ] `.env.local` com o segredo da organização; Sidecar reiniciado (Parte B)
 - [ ] 3 CPS registrados com `resources` e `sidecarRegistered: true` (Parte C)
 - [ ] ACSM registrada como consumidora
