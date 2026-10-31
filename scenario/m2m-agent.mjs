@@ -11,6 +11,7 @@
  *     --org plant1 --federation "plant1 — Forming" \
  *     --want-capability temperature \
  *     --key <M2M_API_KEY>   # se o deploy estiver protegido (ou env M2M_API_KEY)
+ *     --sidecar-secret <segredo>  # SIDECAR_ADMIN_SECRET do teu Sidecar (ou env SIDECAR_SECRET)
  *
  * Sem --want-capability, apenas se registra (plug). Com, também descobre,
  * negocia e faz 3 leituras do alvo (play).
@@ -28,11 +29,16 @@ const ORG = arg("--org", "plant1")
 const FEDERATION = arg("--federation", "")
 const WANT = arg("--want-capability", "")
 const KEY = arg("--key", process.env.M2M_API_KEY || "") // header X-M2M-Key p/ deploy protegido
+const SIDECAR_SECRET = arg("--sidecar-secret", process.env.SIDECAR_SECRET || "") // header X-Sidecar-Secret (segredo da organização)
 
 if (!BASE || !SIDECAR) { console.error("Obrigatório: --base <url do CPS> --sidecar <url do PEP>"); process.exit(1) }
 
 const post = async (path, body) => {
-  const headers = { "Content-Type": "application/json", ...(KEY ? { "X-M2M-Key": KEY } : {}) }
+  const headers = {
+    "Content-Type": "application/json",
+    ...(KEY ? { "X-M2M-Key": KEY } : {}),
+    ...(SIDECAR_SECRET ? { "X-Sidecar-Secret": SIDECAR_SECRET } : {}),
+  }
   const r = await fetch(`${DATASPACE}${path}`, { method: "POST", headers, body: JSON.stringify(body) })
   return { ok: r.ok, status: r.status, json: await r.json().catch(() => ({})) }
 }

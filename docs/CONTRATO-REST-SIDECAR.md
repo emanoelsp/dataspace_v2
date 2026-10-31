@@ -83,7 +83,7 @@ Exemplo de `/api/data` (cnc):
 | POST | `/api/tokens` | admin | recebe o token do contrato → `201 { token }` |
 | GET | `/api/tokens/:id` | admin | `{ token }` |
 | PATCH | `/api/tokens/:id` | admin | `{ "action": "revoke" }` |
-| GET | `/api/proxy/{slug}/{data\|aas}[?qs]` | `Bearer <token do contrato>` | consumo P2P |
+| GET | `/api/proxy/{slug}/{data\|aas\|resourceId}[?qs]` | `Bearer <token do contrato>` | consumo P2P |
 | GET | `/api/access-log?limit=50` | admin | `{ entries, stats }` |
 
 ### `POST /api/equipment`
@@ -278,9 +278,11 @@ Lista extraída de `dataspaceapp/src/app/api/**/route.ts`.
 | Método | URL | Descrição |
 |---|---|---|
 | GET | https://dataspace-v2.vercel.app/api/m2m | índice da API M2M |
-| POST | https://dataspace-v2.vercel.app/api/m2m/register | auto-registro do CPS (conector, federação, ativo, governança e registro no Sidecar) |
+| POST | https://dataspace-v2.vercel.app/api/m2m/register | auto-registro do CPS (conector, federação, ativo com recursos, governança, oferta e registro no Sidecar) |
 | GET | https://dataspace-v2.vercel.app/api/m2m/discover | descoberta por `?capability=&slug=&equipmentType=&q=` |
-| POST | https://dataspace-v2.vercel.app/api/m2m/negotiate | negocia o contrato, gera o token e envia ao Sidecar |
+| GET | https://dataspace-v2.vercel.app/api/m2m/offer | oferta de contrato e diretrizes de um ativo |
+| POST | https://dataspace-v2.vercel.app/api/m2m/negotiate | negocia o contrato (adesão, oferta, conexão, acordo, credencial), gera o token e envia ao Sidecar |
+| GET | https://dataspace-v2.vercel.app/api/m2m/agreement | validação de um contrato negociado |
 | POST | https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint | troca a URL do Sidecar de todos os CPS da organização e re-registra cada CPS |
 | GET | https://dataspace-v2.vercel.app/api/m2m/monitor | monitor M2M |
 
@@ -320,34 +322,49 @@ Lista extraída de `dataspaceapp/src/app/api/**/route.ts`.
 | GET | https://dataspace-v2.vercel.app/api/probe |
 
 Os dados não passam por essas URLs: o consumo é sempre no Sidecar, em
-`{sidecarEndpoint}/api/proxy/{slug}/data`, com o token do contrato.
+`{sidecarEndpoint}/api/proxy/{slug}/{data|aas|resourceId}`, com o token do contrato.
 
 ---
 
 ## 6. Passo a passo M2M — do primeiro CPS ao consumo dos dados
 
 Fluxo completo para quem tem CPS físicos e quer usar o Dataspace só por API:
-**preparar → registrar → descobrir → assinar contrato → consumir**.
+**preparar → registrar → descobrir → ver a oferta → assinar contrato → consumir → validar**.
 
-Nos exemplos: CPS em `http://192.168.1.50:8080`, túnel do Sidecar em
-`https://xxxx.trycloudflare.com`, organização `lab-marcos`.
+Nos exemplos: CPS em `http://127.0.0.1:3101` com 5 recursos, túnel do Sidecar em
+`https://xxxx.trycloudflare.com`, organização `IFSC-GASPAR`.
 
 ### 6.0 Preparar (uma vez)
 
-**Segredos** — os valores ficam nas variáveis de ambiente da Vercel (projeto
-`dataspaceapp`) e são passados ao operador do Sidecar por canal privado:
+**Segredos e headers:**
 
-| Variável | Onde | Para quê | Obrigatória |
+| Item | Onde | Para quê | Obrigatório |
 |---|---|---|---|
-| `SIDECAR_ADMIN_SECRET` | `.env.local` do Sidecar | a nuvem registra CPS e empurra tokens no Sidecar; **igual ao da Vercel** | sim |
-| `M2M_API_KEY` | header `X-M2M-Key` nas chamadas | protege `register` e `negotiate` | sim (está definida em produção) |
-| `DATASPACE_WEBHOOK_URL` / `DATASPACE_WEBHOOK_SECRET` | `.env.local` do Sidecar | acessos aparecem no painel do Dataspace; o secret é o mesmo `SIDECAR_ADMIN_SECRET` | não |
+| `M2M_API_KEY` | header `X-M2M-Key` nas chamadas de escrita | protege `register`, `negotiate`, `sidecar-endpoint` e `agreement` | sim (definida em produção; valor passado pelo Emanoel) |
+| Segredo do Sidecar da organização | `SIDECAR_ADMIN_SECRET` no `.env.local` do Sidecar **e** header `X-Sidecar-Secret` | a nuvem fala com o Sidecar da organização com esse segredo; só quem o conhece altera os CPS da organização | sim |
+| `DATASPACE_WEBHOOK_URL` / `DATASPACE_WEBHOOK_SECRET` | `.env.local` do Sidecar | acessos aparecem no painel do Dataspace (o secret é o `SIDECAR_ADMIN_SECRET` **global** do Dataspace, passado pelo Emanoel) | não |
+
+**O segredo do Sidecar é por organização**, não global. Duas formas de criá-lo:
+
+- **Recomendado — você escolhe:** gere um valor (≥ 32 caracteres), coloque em
+  `SIDECAR_ADMIN_SECRET` e envie o mesmo valor em `X-Sidecar-Secret` no primeiro
+  register da organização. Ele vira o segredo dela e o registro no Sidecar já
+  funciona na primeira chamada.
+
+  ```bash
+  openssl rand -hex 32
+  ```
+
+- **O Dataspace gera:** sem o header no primeiro register, a resposta traz
+  `sidecarSecret` (mostrado **uma única vez**). Coloque no `.env.local`, reinicie
+  o Sidecar e repita o register com o header.
+
+A partir do primeiro register, **toda** chamada de `register` e
+`sidecar-endpoint` dessa organização exige `X-Sidecar-Secret`. Sem ele: `403`.
 
 ```bash
 # .env.local do Sidecar
-SIDECAR_ADMIN_SECRET=<valor da Vercel>
-DATASPACE_WEBHOOK_URL=https://dataspace-v2.vercel.app/api/sidecar/events
-DATASPACE_WEBHOOK_SECRET=<valor da Vercel>
+SIDECAR_ADMIN_SECRET=<segredo da organização>
 ```
 
 **Subir o Sidecar e expor:**
@@ -359,20 +376,21 @@ cloudflared tunnel --url http://localhost:3100  # → https://xxxx.trycloudflare
 ```
 
 A Vercel não alcança a LAN: a URL do túnel é o `sidecarEndpoint`. Se o túnel
-reiniciar, a URL muda e é preciso repetir o registro (6.1).
+reiniciar, use 6.7 para trocar a URL de todos os CPS numa chamada.
 
-**Contrato que o CPS físico precisa cumprir** (o Sidecar chama exatamente isso):
+**Contrato que o CPS precisa cumprir** (o Sidecar chama exatamente isso, sempre
+com `Authorization: Bearer demo`, esperando JSON):
 
-| Método | Rota no CPS | Header enviado pelo Sidecar | Resposta |
-|---|---|---|---|
-| GET | `{baseUrl}/api/data` | `Authorization: Bearer demo` | JSON; idealmente `{ equipmentType, eclassIrdi, timestamp, metrics: {…} }` |
-| GET | `{baseUrl}/api/aas[?submodel=…]` | `Authorization: Bearer demo` | JSON (AAS Environment) |
+| Endpoint no Sidecar | Path chamado no CPS |
+|---|---|
+| `/api/proxy/{slug}/data` | `{baseUrl}/api/data` |
+| `/api/proxy/{slug}/aas` | `{baseUrl}/api/aas` |
+| `/api/proxy/{slug}/{resourceId}` | `{baseUrl}{resource.path}` (ex.: `/api/v1/operational`) |
 
-Se o CPS fala outro protocolo (OPC UA, MQTT, Modbus) ou outras rotas, é preciso
-um adaptador HTTP na frente dele. Teste da máquina do Sidecar:
+A query string é repassada ao CPS. Teste da máquina do Sidecar:
 
 ```bash
-curl http://192.168.1.50:8080/api/data -H "Authorization: Bearer demo"
+curl http://127.0.0.1:3101/api/v1/operational -H "Authorization: Bearer demo"
 ```
 
 ### 6.1 Registrar o CPS — `POST /api/m2m/register`
@@ -381,93 +399,114 @@ curl http://192.168.1.50:8080/api/data -H "Authorization: Bearer demo"
 |---|---|
 | **Método** | `POST` |
 | **URL** | `https://dataspace-v2.vercel.app/api/m2m/register` |
-| **Headers** | `Content-Type: application/json`, `X-M2M-Key: <M2M_API_KEY>` |
+| **Headers** | `Content-Type: application/json`, `X-M2M-Key: <M2M_API_KEY>`, `X-Sidecar-Secret: <segredo da organização>` |
 
 **Body:**
 
 | Campo | Obrigatório | Descrição |
 |---|---|---|
 | `name` | sim | nome legível do CPS |
-| `baseUrl` | sim | URL do CPS na LAN (sem `/api/data`) |
+| `baseUrl` | sim | URL do CPS na LAN, vista pelo Sidecar (sem `/api/data`) |
 | `sidecarEndpoint` | sim | URL pública do túnel do Sidecar |
-| `organization` | não (padrão `plant1`) | use o nome da sua organização |
-| `equipmentSlug` | não (padrão: slug do `name`) | **único no Dataspace inteiro**, ex.: `marcos-cnc01` |
-| `assetType` | recomendado | tipo do CPS (`CNC`, `Robot`, …) |
+| `organization` | não (padrão `plant1`) | nome da organização; define o segredo do Sidecar |
+| `equipmentSlug` | não (padrão: slug do `name`) | **único no Dataspace inteiro**, ex.: `cpslai1` |
+| `assetType` | recomendado | tipo do CPS (`Conveyor`, `CNC`, …) |
 | `eclassIrdi` | recomendado | classe ECLASS |
 | `capabilities` | recomendado | chaves de métrica; usadas na descoberta por capacidade |
 | `description` | não | texto livre (entra na busca) |
+| `resources` | não | recursos de dados do CPS: `[{ "id", "name", "path", "description"?, "semanticId"? }]` |
 | `federation` | não | `{ "create": { "name", "type": "Open"\|"Consortium"\|"Private" } }` \| `{ "join": "<id>" }` \| `{ "joinByName": "<nome>" }` |
 | `governance` | não | `{ accessTokenTtlMinutes (padrão 30), requiresManualApproval, purposeBinding, revocationMode }` |
+
+Regras de `resources`: `id` em slug minúsculo (`a-z`, `0-9`, `-`), único, diferente
+de `data` e `aas`; `path` absoluto no CPS (começa com `/`, sem `..`); até 32 itens.
 
 > `assetType`, `eclassIrdi` e `capabilities` devem ir explícitos: a colheita
 > automática roda na Vercel e tenta ler o `baseUrl` da LAN, que ela não alcança.
 
-**Exemplo — primeiro CPS (cria a federação):**
+**Exemplo — CPS com 5 recursos (primeiro CPS da organização, cria a federação):**
 
 ```bash
 curl -X POST https://dataspace-v2.vercel.app/api/m2m/register \
   -H "Content-Type: application/json" \
   -H "X-M2M-Key: <M2M_API_KEY>" \
+  -H "X-Sidecar-Secret: <segredo da organização>" \
   -d '{
-    "name": "Bancada CNC Marcos",
-    "baseUrl": "http://192.168.1.50:8080",
+    "name": "CPS-LAI-01 - Distribution/Conveyor Station",
+    "baseUrl": "http://127.0.0.1:3101",
     "sidecarEndpoint": "https://xxxx.trycloudflare.com",
-    "organization": "lab-marcos",
-    "equipmentSlug": "marcos-cnc01",
-    "assetType": "CNC",
-    "eclassIrdi": "0173-1#01-ACJ843#001",
-    "capabilities": ["spindleSpeed_rpm", "temperature_C"],
-    "description": "CPS físico da bancada do Marcos",
-    "federation": { "create": { "name": "lab-marcos — Controle", "type": "Open" } },
-    "governance": { "accessTokenTtlMinutes": 30, "requiresManualApproval": false }
+    "organization": "IFSC-GASPAR",
+    "equipmentSlug": "cpslai1",
+    "assetType": "Conveyor",
+    "eclassIrdi": "0173-1#01-...",
+    "capabilities": ["beltSpeed_m_s"],
+    "federation": { "create": { "name": "ifsc", "type": "Open" } },
+    "governance": { "accessTokenTtlMinutes": 30, "requiresManualApproval": false },
+    "resources": [
+      { "id": "operational",   "name": "Operational Data",    "path": "/api/v1/operational" },
+      { "id": "cognitive",     "name": "Cognitive Knowledge", "path": "/api/v1/cognitive" },
+      { "id": "ppu-events",    "name": "Lifecycle Events",    "path": "/api/v1/ppu/events" },
+      { "id": "hcm-episodes",  "name": "HCM Episodes",        "path": "/api/v1/hcm/episodes" },
+      { "id": "hcm-knowledge", "name": "HCM Knowledge",       "path": "/api/v1/hcm/knowledge" }
+    ]
   }'
 ```
 
-**CPS seguintes (entram na mesma federação):**
-
-```json
-"federation": { "joinByName": "lab-marcos — Controle" }
-```
+**CPS seguintes:** mesmo header `X-Sidecar-Secret` e
+`"federation": { "joinByName": "ifsc" }`.
 
 **Resposta (200):**
 
 ```json
 {
   "ok": true,
-  "participantId": "urn:dataspace:participant:lab-marcos:marcos-cnc01",
+  "participantId": "urn:dataspace:participant:ifsc-gaspar:cpslai1",
   "connectorId": "…",
-  "federation": { "id": "…", "name": "lab-marcos — Controle", "created": true, "admissionMode": "self-service" },
+  "federation": { "id": "…", "name": "ifsc", "created": true, "admissionMode": "self-service" },
   "complianceId": "…",
   "assetId": "abc123",
-  "equipmentSlug": "marcos-cnc01",
+  "equipmentSlug": "cpslai1",
   "governanceId": "…",
-  "capabilities": ["spindleSpeed_rpm", "temperature_C"],
+  "contractOfferId": "…",
+  "capabilities": ["beltSpeed_m_s"],
+  "resources": [{ "id": "operational", "name": "Operational Data" }, "…"],
+  "resourceUrls": {
+    "operational": "https://xxxx.trycloudflare.com/api/proxy/cpslai1/operational",
+    "…": "…"
+  },
   "sidecarRegistered": true,
-  "dataUrl": "https://xxxx.trycloudflare.com/api/proxy/marcos-cnc01/data"
+  "dataUrl": "https://xxxx.trycloudflare.com/api/proxy/cpslai1/data"
 }
 ```
 
-O que acontece: a nuvem cria/atualiza conector → federação → compliance →
-ativo no catálogo → governança e chama `POST {sidecarEndpoint}/api/equipment`.
-É idempotente por `organization` + `equipmentSlug` (repetir o POST só atualiza).
+Se o Dataspace gerou o segredo (primeiro register sem header), a resposta traz
+também `sidecarSecret` e `sidecarSecretNotice`.
+
+O que acontece: cria/atualiza conector → federação → compliance → ativo (com os
+recursos) → governança → **oferta de contrato** com as diretrizes, e chama
+`POST {sidecarEndpoint}/api/equipment` com o segredo da organização e o mapa de
+recursos. Idempotente por `organization` + `equipmentSlug`.
 
 | Resposta | Causa |
 |---|---|
-| `sidecarRegistered: false` | nuvem não alcançou o Sidecar: túnel caído ou `SIDECAR_ADMIN_SECRET` diferente |
+| `sidecarRegistered: false` | o Sidecar não aceitou: túnel caído ou `SIDECAR_ADMIN_SECRET` ≠ segredo da organização |
 | `400 Required: name, baseUrl, sidecarEndpoint` | campo obrigatório ausente |
-| `400 … must be valid URLs` | `baseUrl`/`sidecarEndpoint` inválidos |
+| `400 resources: …` | recurso inválido (id, path, duplicado) |
+| `400 X-Sidecar-Secret must have at least 32 characters.` | segredo curto no primeiro register |
 | `401 Missing or invalid X-M2M-Key header.` | header ausente ou errado |
+| `403 Organization "…" is already registered…` | organização já tem segredo e o header faltou ou está errado |
 | `404 Federation not found…` | `join`/`joinByName` não existe |
+| `503 Sidecar secret store unavailable` | configuração da nuvem — avise o Emanoel |
 
 **Conferir no Sidecar:**
 
 ```bash
-curl https://xxxx.trycloudflare.com/api/equipment
+curl https://xxxx.trycloudflare.com/api/equipment   # cpslai1 com "resources": [...]
 curl https://xxxx.trycloudflare.com/api/status
 ```
 
-> O consumidor também precisa de identidade: registre-o do mesmo jeito
-> (ex.: `equipmentSlug: "marcos-robo01"`) e use o `participantId` devolvido.
+> O consumidor também precisa de identidade: registre-o do mesmo jeito (ex.:
+> `equipmentSlug: "acsm"`) e use o `participantId` devolvido.
 
 ### 6.2 Descobrir CPS — `GET /api/m2m/discover`
 
@@ -483,21 +522,19 @@ Devolve só metadados, nunca dados do CPS.
 
 | Parâmetro | Exemplo | Casa com |
 |---|---|---|
-| `slug` | `?slug=marcos-cnc01` | slug exato |
+| `slug` | `?slug=cpslai1` | slug exato |
 | `capability` | `?capability=temperature` | capacidades, semânticas, chaves de métrica |
-| `equipmentType` | `?equipmentType=CNC` | `assetType` (contém) |
+| `equipmentType` | `?equipmentType=Conveyor` | `assetType` (contém) |
 | `federationId` | `?federationId=<id>` | uma federação |
-| `q` | `?q=bancada` | texto livre (nome, descrição, IRDI, capacidades) |
-| `exclude` | `?exclude=marcos-robo01` | ignora slug ou participantId informado |
+| `q` | `?q=hcm` | texto livre (nome, descrição, IRDI, capacidades, **recursos**) |
+| `exclude` | `?exclude=acsm` | ignora slug ou participantId informado |
 | `status` | `?status=any` | padrão `available` |
 | `limit` | `?limit=10` | padrão 50, máx. 200 |
 
-**Exemplos:**
+**Exemplo:**
 
 ```bash
-curl "https://dataspace-v2.vercel.app/api/m2m/discover?slug=marcos-cnc01"
-curl "https://dataspace-v2.vercel.app/api/m2m/discover?capability=spindleSpeed&exclude=marcos-robo01"
-curl "https://dataspace-v2.vercel.app/api/m2m/discover?federationId=<id>"
+curl "https://dataspace-v2.vercel.app/api/m2m/discover?slug=cpslai1"
 ```
 
 **Resposta (200):**
@@ -505,31 +542,77 @@ curl "https://dataspace-v2.vercel.app/api/m2m/discover?federationId=<id>"
 ```json
 {
   "count": 1,
-  "query": { "capability": "", "equipmentType": "", "slug": "marcos-cnc01", "federationId": "", "q": "", "status": "available" },
   "results": [{
     "assetId": "abc123",
-    "name": "Bancada CNC Marcos",
-    "equipmentSlug": "marcos-cnc01",
-    "equipmentType": "CNC",
-    "description": "CPS físico da bancada do Marcos",
-    "capabilities": ["spindleSpeed_rpm", "temperature_C"],
-    "irdi": "0173-1#01-ACJ843#001",
-    "aasId": "",
-    "status": "available",
-    "federation": { "id": "…", "name": "lab-marcos — Controle", "admissionMode": "self-service" },
-    "owner": "urn:dataspace:participant:lab-marcos:marcos-cnc01",
+    "name": "CPS-LAI-01 - Distribution/Conveyor Station",
+    "equipmentSlug": "cpslai1",
+    "equipmentType": "Conveyor",
+    "capabilities": ["beltSpeed_m_s"],
+    "federation": { "id": "…", "name": "ifsc", "admissionMode": "self-service" },
+    "owner": "urn:dataspace:participant:ifsc-gaspar:cpslai1",
     "sidecarEndpoint": "https://xxxx.trycloudflare.com",
-    "dataUrl": "https://xxxx.trycloudflare.com/api/proxy/marcos-cnc01/data"
+    "dataUrl": "https://xxxx.trycloudflare.com/api/proxy/cpslai1/data",
+    "resources": [
+      { "id": "operational", "name": "Operational Data", "description": "", "semanticId": "",
+        "url": "https://xxxx.trycloudflare.com/api/proxy/cpslai1/operational" }
+    ]
   }]
 }
 ```
 
-Guarde o **`assetId`** para a negociação. O `dataUrl` só responde com token.
+Guarde o **`assetId`**. As URLs só respondem com token.
 
 > Federação `Consortium` fica oculta na descoberta aberta — só aparece com
 > `?federationId=<id>`.
 
-### 6.3 Assinar o contrato — `POST /api/m2m/negotiate`
+### 6.3 Ver a oferta de contrato — `GET /api/m2m/offer`
+
+| | |
+|---|---|
+| **Método** | `GET` |
+| **URL** | `https://dataspace-v2.vercel.app/api/m2m/offer?assetId=<id>` (ou `?slug=<slug>`) |
+| **Headers** | nenhum |
+
+Mostra as diretrizes que o consumidor aceita ao negociar.
+
+**Resposta (200):**
+
+```json
+{
+  "asset": { "assetId": "abc123", "name": "CPS-LAI-01 …", "equipmentSlug": "cpslai1", "owner": "urn:…:cpslai1" },
+  "federation": { "id": "…", "name": "ifsc", "admissionMode": "self-service" },
+  "offer": { "id": "…", "version": 1, "status": "published" },
+  "directives": {
+    "purposeBinding": false,
+    "requiresManualApproval": false,
+    "validForHours": 24,
+    "accessTokenTtlMinutes": 30,
+    "revocation": "ttl-expiry",
+    "revocable": true,
+    "governancePolicyId": "…",
+    "governancePolicies": "…",
+    "usagePeriods": "",
+    "resources": [{ "id": "operational", "name": "Operational Data" }, "…"]
+  },
+  "resources": [{ "id": "operational", "name": "Operational Data", "url": "https://…/api/proxy/cpslai1/operational" }],
+  "negotiation": "automatic",
+  "howToSign": {
+    "method": "POST", "path": "/api/m2m/negotiate",
+    "body": { "consumerParticipantId": "<your participantId>", "targetAssetId": "abc123", "resources": ["operational", "…"] }
+  }
+}
+```
+
+| Campo de `directives` | Significado |
+|---|---|
+| `purposeBinding` | se `true`, o negotiate exige `purpose` |
+| `requiresManualApproval` | se `true`, o negotiate devolve `pending` (evite em M2M) |
+| `validForHours` | validade do acordo assinado |
+| `accessTokenTtlMinutes` | validade de cada token (nunca além do acordo) |
+| `revocation` / `revocable` | modo de revogação |
+| `resources` | recursos que podem ser contratados |
+
+### 6.4 Assinar o contrato — `POST /api/m2m/negotiate`
 
 | | |
 |---|---|
@@ -542,23 +625,36 @@ Guarde o **`assetId`** para a negociação. O `dataUrl` só responde com token.
 | Campo | Obrigatório | Descrição |
 |---|---|---|
 | `consumerParticipantId` | sim | `participantId` do consumidor (do register dele) |
-| `targetAssetId` ou `targetSlug` | um dos dois | prefira `targetAssetId` (o slug pega o primeiro ativo com aquele nome) |
+| `targetAssetId` ou `targetSlug` | um dos dois | prefira `targetAssetId` |
 | `consumerName` | não | nome legível nos logs |
-| `purpose` | se a governança tiver `purposeBinding: true` | finalidade do uso |
+| `purpose` | se `purposeBinding: true` | finalidade do uso |
+| `resources` | não | ids dos recursos a contratar; padrão: todos os do ativo |
 
-**Exemplo:**
+**Exemplo — contratar só 2 dos 5 recursos:**
 
 ```bash
 curl -X POST https://dataspace-v2.vercel.app/api/m2m/negotiate \
   -H "Content-Type: application/json" \
   -H "X-M2M-Key: <M2M_API_KEY>" \
   -d '{
-    "consumerParticipantId": "urn:dataspace:participant:lab-marcos:marcos-robo01",
-    "consumerName": "marcos-robo01",
+    "consumerParticipantId": "urn:dataspace:participant:ifsc-gaspar:acsm",
+    "consumerName": "acsm",
     "targetAssetId": "abc123",
-    "purpose": "controle adaptativo da bancada"
+    "purpose": "controle adaptativo",
+    "resources": ["operational", "hcm-episodes"]
   }'
 ```
+
+**Etapas gravadas** (as mesmas do fluxo pela interface):
+
+| # | Etapa | Coleção | Observação |
+|---|---|---|---|
+| 1 | adesão à federação | `federationMemberships` | automática em federação `self-service` ou se o consumidor já entrou nela pelo register |
+| 2 | oferta de contrato | `contractOffers` | a publicada no register |
+| 3 | conexão entre conectores | `connectorConnections` | reaproveitada nas próximas negociações |
+| 4 | acordo assinado | `contractAgreements` | `signedByConsumerAt` + `signedByProviderAt`, `validFrom`/`validUntil`, recursos |
+| 5 | credencial de uso | `credentialGrants` | válida até o fim do acordo |
+| 6 | token | `accessTokens` + Sidecar | `permissions` = `data`, `aas` + recursos contratados |
 
 **Resposta — concedido (200):**
 
@@ -567,120 +663,155 @@ curl -X POST https://dataspace-v2.vercel.app/api/m2m/negotiate \
   "status": "granted",
   "token": "dsp_m2m_9f3c…",
   "tokenType": "Bearer",
-  "dataUrl": "https://xxxx.trycloudflare.com/api/proxy/marcos-cnc01/data",
-  "aasUrl": "https://xxxx.trycloudflare.com/api/proxy/marcos-cnc01/aas",
-  "sidecarEndpoint": "https://xxxx.trycloudflare.com",
-  "equipmentSlug": "marcos-cnc01",
-  "expiresAt": "2026-10-29T13:30:00.000Z",
-  "contractRef": "<contractAgreements id>",
-  "sidecarTokenId": "<id do token no Sidecar>",
-  "governance": {
-    "policyId": "…",
-    "accessTokenTtlMinutes": 30,
-    "purposeBinding": false,
-    "requiresManualApproval": false,
-    "revocationMode": "ttl-expiry",
-    "conditions": "controle adaptativo da bancada"
+  "dataUrl": "https://xxxx.trycloudflare.com/api/proxy/cpslai1/data",
+  "aasUrl": "https://xxxx.trycloudflare.com/api/proxy/cpslai1/aas",
+  "resourceUrls": {
+    "operational": "https://xxxx.trycloudflare.com/api/proxy/cpslai1/operational",
+    "hcm-episodes": "https://xxxx.trycloudflare.com/api/proxy/cpslai1/hcm-episodes"
   },
-  "usage": "GET {dataUrl}  Authorization: Bearer {token}"
+  "expiresAt": "2026-10-31T13:30:00.000Z",
+  "contractRef": "<contractAgreements id>",
+  "agreementValidUntil": "2026-11-01T13:00:00.000Z",
+  "offerId": "…",
+  "credentialGrantId": "…",
+  "sidecarTokenId": "<id do token no Sidecar>",
+  "permissions": ["data", "aas", "operational", "hcm-episodes"],
+  "governance": { "policyId": "…", "accessTokenTtlMinutes": 30, "…": "…" },
+  "steps": [
+    { "step": "federation-membership", "id": "…", "status": "created" },
+    { "step": "contract-offer",        "id": "…", "status": "reused" },
+    { "step": "connector-connection",  "id": "…", "status": "created" },
+    { "step": "contract-agreement",    "id": "…", "status": "created" },
+    { "step": "credential-grant",      "id": "…", "status": "created" },
+    { "step": "access-token",          "id": "…", "status": "created" }
+  ],
+  "validate": "GET /api/m2m/agreement?contractRef=<contractRef>"
 }
 ```
 
-O que acontece: a nuvem grava o `contractAgreements` (status `finalized`), gera o
-token com o TTL da governança, empurra ao Sidecar do dono (`POST /api/tokens`) e
-registra em `accessTokens`.
-
 | Resposta | Causa |
 |---|---|
-| `sidecarTokenId: null` | o token não chegou ao Sidecar (túnel ou `SIDECAR_ADMIN_SECRET`); o consumo dará `401 Token not found` |
-| `202 { status: "pending", requestId }` | governança com `requiresManualApproval: true` (ver aviso abaixo) |
+| `sidecarTokenId: null` | o token não chegou ao Sidecar (túnel ou segredo); o consumo dará `401 Token not found` |
+| `202 { status: "pending", requestId }` | governança com `requiresManualApproval: true` (ver aviso) |
 | `400 Required: consumerParticipantId and (targetAssetId or targetSlug)` | body incompleto |
+| `400 resources must be an array of resource ids` | `resources` mal formado |
+| `403 The asset federation does not admit new members automatically.` | federação com aprovação/convite e consumidor não é membro |
+| `403 Connector connection revoked/rejected by the provider.` | o provedor bloqueou esse consumidor |
 | `404 Target asset not found` | `assetId`/slug inexistente |
-| `409 Target asset has no equipmentSlug/sidecarEndpoint` | ativo sem Sidecar configurado |
+| `409 Target asset has no equipmentSlug/sidecarEndpoint` | ativo sem Sidecar |
+| `409 The provider organization has no sidecar secret yet…` | ativo registrado antes do segredo por organização: o provedor precisa refazer o register |
+| `422 Unknown resources: …` (+ `availableResources`) | recurso pedido não existe no ativo |
 | `422 This asset requires 'purpose'` | `purposeBinding` ativo e `purpose` vazio |
 
 > **Não use aprovação manual em CPS registrado por M2M.** Só um usuário logado
-> cujo `uid` seja o dono do ativo pode aprovar
-> (`lib/access-request-decisions-admin.ts:62`), e o dono M2M é um
-> `participantId` (`urn:dataspace:participant:…`). O pedido fica pendente para
-> sempre. Mantenha `requiresManualApproval: false` no register.
+> cujo `uid` seja o dono do ativo pode aprovar, e o dono M2M é um
+> `participantId`. O pedido fica pendente para sempre.
 
-### 6.4 Consumir os dados — Sidecar `GET /api/proxy/{slug}/{data|aas}`
+### 6.5 Consumir os dados — Sidecar `GET /api/proxy/{slug}/{data|aas|resourceId}`
 
 | | |
 |---|---|
 | **Método** | `GET` |
-| **URL** | `{sidecarEndpoint}/api/proxy/{slug}/data` ou `/aas[?submodel=Nameplate\|TechnicalData\|OperationalData]` |
+| **URL** | qualquer entrada de `resourceUrls`, ou `dataUrl` / `aasUrl` |
 | **Headers** | `Authorization: Bearer <token do negotiate>` |
 
-Os dados vão direto do Sidecar ao consumidor — não passam pela Vercel.
-
-**Exemplos:**
+Os dados vão direto do Sidecar ao consumidor — não passam pela Vercel. A query
+string é repassada ao CPS.
 
 ```bash
-curl https://xxxx.trycloudflare.com/api/proxy/marcos-cnc01/data \
+curl "https://xxxx.trycloudflare.com/api/proxy/cpslai1/operational?limit=50" \
   -H "Authorization: Bearer dsp_m2m_9f3c…"
 
-curl "https://xxxx.trycloudflare.com/api/proxy/marcos-cnc01/aas?submodel=OperationalData" \
+curl https://xxxx.trycloudflare.com/api/proxy/cpslai1/hcm-episodes \
   -H "Authorization: Bearer dsp_m2m_9f3c…"
 ```
 
-**Resposta (200):** o JSON do próprio CPS, com headers de rastreabilidade:
-
-```
-X-Sidecar-Proxy: true
-X-Token-Id: <id do token no Sidecar>
-X-Contract-Ref: <contractAgreements id>
-X-Data-Owner: urn:dataspace:participant:lab-marcos:marcos-cnc01
-X-Data-Client: urn:dataspace:participant:lab-marcos:marcos-robo01
-X-Federation-Id: <id>
-X-Governance-Policy: <policyId>
-X-Response-Time-Ms: 42
-Cache-Control: no-store
-```
+**Resposta (200):** o JSON do próprio CPS, com headers de rastreabilidade
+`X-Sidecar-Proxy`, `X-Token-Id`, `X-Contract-Ref`, `X-Data-Owner`,
+`X-Data-Client`, `X-Federation-Id`, `X-Governance-Policy`, `X-Response-Time-Ms`.
 
 | Resposta | Causa |
 |---|---|
-| `400 Invalid endpoint` | endpoint diferente de `data`/`aas` |
-| `401 Token required` | faltou `Authorization` |
-| `401 Token not found` | o token não chegou ao Sidecar |
+| `400 Invalid endpoint` (+ `available`) | recurso não registrado nesse CPS |
+| `401 Token required` / `Token not found` | faltou `Authorization`, ou o token não chegou ao Sidecar |
 | `401 Token expired` | passou o TTL — negocie de novo |
 | `403 Token revoked` | token revogado |
 | `403 Token not authorized for this equipment` | token de outro slug |
-| `403 Insufficient permission` | token sem permissão para o endpoint |
+| `403 Insufficient permission` | recurso não contratado |
 | `404 Unknown equipment` | slug não registrado ou desabilitado no Sidecar |
-| `503 Equipment unreachable` | Sidecar não alcançou o `baseUrl` do CPS na LAN |
+| `503 Equipment unreachable` | Sidecar não alcançou o CPS na LAN |
 
-**Renovação:** o token vale até `expiresAt` (padrão 30 min). Para consumo
-contínuo, chame o `negotiate` de novo antes de expirar e troque o token.
+**Renovação:** o token vale até `expiresAt`. Para consumo contínuo, chame o
+`negotiate` de novo antes de expirar.
 
-### 6.5 Trocar a URL do Sidecar — `POST /api/m2m/sidecar-endpoint`
+### 6.6 Validar o contrato — `GET /api/m2m/agreement`
 
-Túneis efêmeros (`cloudflared tunnel --url …` sem conta) geram uma URL nova a
-cada reinício. Em vez de repetir o register de cada CPS/recurso, uma chamada
-atualiza todos os CPS M2M da organização.
+| | |
+|---|---|
+| **Método** | `GET` |
+| **URL** | `https://dataspace-v2.vercel.app/api/m2m/agreement?contractRef=<contractRef>` |
+| **Headers** | `X-M2M-Key: <M2M_API_KEY>` |
+
+Confere o que foi contratado e se ainda vale. Nunca devolve o valor do token.
+
+**Resposta (200):**
+
+```json
+{
+  "contractRef": "…",
+  "effectiveStatus": "active",
+  "agreement": {
+    "status": "finalized",
+    "offerId": "…",
+    "assetId": "abc123", "assetName": "CPS-LAI-01 …",
+    "provider": "urn:dataspace:participant:ifsc-gaspar:cpslai1",
+    "consumer": "urn:dataspace:participant:ifsc-gaspar:acsm",
+    "federationId": "…",
+    "governancePolicyId": "…",
+    "purpose": "controle adaptativo",
+    "resources": ["operational", "hcm-episodes"],
+    "signedByConsumerAt": "2026-10-31T13:00:00.000Z",
+    "signedByProviderAt": "2026-10-31T13:00:00.000Z",
+    "validFrom": "2026-10-31T13:00:00.000Z",
+    "validUntil": "2026-11-01T13:00:00.000Z"
+  },
+  "credential": { "id": "…", "status": "active", "expiresAt": "2026-11-01T13:00:00.000Z" },
+  "tokens": [
+    { "id": "…", "status": "active", "expiresAt": "…", "permissions": ["data", "aas", "operational", "hcm-episodes"],
+      "sidecarTokenId": "…", "deliveredToSidecar": true }
+  ]
+}
+```
+
+| `effectiveStatus` | Significado |
+|---|---|
+| `active` | acordo válido e há token ativo |
+| `agreement-valid-no-active-token` | acordo válido, tokens expirados — negocie de novo para outro token |
+| `expired` | acordo vencido |
+| outro (`rejected`, `revoked`…) | status do acordo |
+
+### 6.7 Trocar a URL do Sidecar — `POST /api/m2m/sidecar-endpoint`
 
 | | |
 |---|---|
 | **Método** | `POST` |
 | **URL** | `https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint` |
-| **Headers** | `Content-Type: application/json`, `X-M2M-Key: <M2M_API_KEY>` |
+| **Headers** | `Content-Type: application/json`, `X-M2M-Key: <M2M_API_KEY>`, `X-Sidecar-Secret: <segredo da organização>` |
 
 **Body:**
 
 | Campo | Obrigatório | Descrição |
 |---|---|---|
-| `organization` | sim | a mesma `organization` usada no register (maiúsculas não importam) |
+| `organization` | sim | a mesma `organization` do register (maiúsculas não importam) |
 | `sidecarEndpoint` | sim | nova URL pública do Sidecar |
 | `equipmentSlug` | não | limita a atualização a um CPS |
-
-**Exemplo:**
 
 ```bash
 curl -X POST https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint \
   -H "Content-Type: application/json" \
   -H "X-M2M-Key: <M2M_API_KEY>" \
-  -d '{ "organization": "lab-marcos", "sidecarEndpoint": "https://nova-url.trycloudflare.com" }'
+  -H "X-Sidecar-Secret: <segredo da organização>" \
+  -d '{ "organization": "IFSC-GASPAR", "sidecarEndpoint": "https://nova-url.trycloudflare.com" }'
 ```
 
 **Resposta (200):**
@@ -688,44 +819,42 @@ curl -X POST https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint \
 ```json
 {
   "ok": true,
-  "organization": "lab-marcos",
+  "organization": "IFSC-GASPAR",
   "sidecarEndpoint": "https://nova-url.trycloudflare.com",
   "updated": { "connectors": 3, "federations": 1, "assets": 3, "accessTokens": 2 },
-  "equipment": [
-    { "equipmentSlug": "marcos-cnc01", "assetId": "abc123", "sidecarRegistered": true }
-  ],
+  "equipment": [{ "equipmentSlug": "cpslai1", "assetId": "abc123", "sidecarRegistered": true }],
   "sidecarRegistered": true
 }
 ```
 
-O que acontece: atualiza `sidecarEndpoint` em conectores, federações, ativos e
-`accessTokens` ativos de cada participante `urn:dataspace:participant:{organization}:*`
-e chama `POST {novo sidecar}/api/equipment` para cada CPS (com o `baseUrl` do
-register). Tokens já emitidos continuam valendo: ficam no `.data/` do Sidecar;
-só o `dataUrl` passa a usar a URL nova.
+Atualiza conectores, federações, ativos e `accessTokens` ativos da organização e
+re-registra cada CPS (com os recursos) no novo Sidecar. Tokens já emitidos
+continuam válidos; só as URLs mudam.
 
 | Resposta | Causa |
 |---|---|
-| `sidecarRegistered: false` (geral ou por CPS) | o novo Sidecar não respondeu 2xx: túnel fora do ar ou `SIDECAR_ADMIN_SECRET` diferente |
-| `400 Required: organization, sidecarEndpoint` | campo ausente |
-| `400 sidecarEndpoint must be a valid URL` | URL inválida |
+| `sidecarRegistered: false` | o novo Sidecar não respondeu 2xx: túnel fora do ar ou segredo diferente |
+| `400 Required: organization, sidecarEndpoint` / `… valid URL` | body inválido |
 | `401 Missing or invalid X-M2M-Key header.` | header ausente ou errado |
-| `404 No M2M participants found…` | nenhum CPS registrado por M2M com essa organização/slug |
+| `403 Missing or invalid X-Sidecar-Secret header.` | segredo ausente ou errado |
+| `404 Organization "…" has no sidecar secret yet…` | a organização nunca fez o register com segredo |
+| `404 No M2M participants found…` | nenhum CPS M2M com essa organização/slug |
 
 > URL fixa evita esse passo: domínio estático gratuito do ngrok
-> (`ngrok http --url=<nome>.ngrok-free.app 3100`) ou túnel nomeado do
-> cloudflared (exige domínio na Cloudflare).
+> (`ngrok http --url=<nome>.ngrok-free.app 3100`) ou túnel nomeado do cloudflared.
 
-### 6.6 Resumo do fluxo
+### 6.8 Resumo do fluxo
 
 | # | Passo | Método | URL | Auth |
 |---|---|---|---|---|
-| 0 | Sidecar no ar + túnel | — | `cloudflared tunnel --url http://localhost:3100` | `SIDECAR_ADMIN_SECRET` no `.env.local` |
-| 1 | Registrar CPS (provedor e consumidor) | POST | `https://dataspace-v2.vercel.app/api/m2m/register` | `X-M2M-Key` |
+| 0 | Sidecar no ar + túnel | — | `cloudflared tunnel --url http://localhost:3100` | segredo da organização no `.env.local` |
+| 1 | Registrar CPS (provedor e consumidor) | POST | `https://dataspace-v2.vercel.app/api/m2m/register` | `X-M2M-Key`, `X-Sidecar-Secret` |
 | 2 | Descobrir | GET | `https://dataspace-v2.vercel.app/api/m2m/discover?…` | — |
-| 3 | Assinar contrato / obter token | POST | `https://dataspace-v2.vercel.app/api/m2m/negotiate` | `X-M2M-Key` |
-| 4 | Consumir dados | GET | `{sidecarEndpoint}/api/proxy/{slug}/data` | `Bearer <token>` |
-| — | URL do túnel mudou | POST | `https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint` | `X-M2M-Key` |
+| 3 | Ver oferta e diretrizes | GET | `https://dataspace-v2.vercel.app/api/m2m/offer?assetId=…` | — |
+| 4 | Assinar contrato / obter token | POST | `https://dataspace-v2.vercel.app/api/m2m/negotiate` | `X-M2M-Key` |
+| 5 | Consumir dados | GET | `{sidecarEndpoint}/api/proxy/{slug}/{resourceId}` | `Bearer <token>` |
+| 6 | Validar contrato | GET | `https://dataspace-v2.vercel.app/api/m2m/agreement?contractRef=…` | `X-M2M-Key` |
+| — | URL do túnel mudou | POST | `https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint` | `X-M2M-Key`, `X-Sidecar-Secret` |
 
 ---
 
@@ -740,6 +869,14 @@ só o `dataUrl` passa a usar a URL nova.
 - O Sidecar ignora `aasEndpoint`/`dataEndpoint` enviados no registro e sempre
   usa `{baseUrl}/api/data|aas`.
 - `SIDECAR_ADMIN_SECRET` cai em `"admin"` se não estiver definido, nos dois lados.
+- **Segredo por organização (M2M):** CPS registrados por M2M usam o segredo do
+  Sidecar da organização (cifrado no Firestore com `SIDECAR_SECRETS_KEY`, só na
+  Vercel). Se essa chave for perdida ou trocada, os segredos não decifram e as
+  rotas M2M dessas organizações respondem 503; a recuperação é apagar o documento
+  da organização em `m2mOrganizations` e refazer o register. O fluxo humano
+  (`push-token`, `register-equipment`) continua com o segredo global.
+- O primeiro register de uma organização define o segredo dela (confiança no
+  primeiro uso): quem chegar primeiro com o nome da organização fica com ela.
 - O trecho LAN Sidecar → CPS usa o token fixo `demo`, que os CPS aceitam mesmo
   com `EQUIPMENT_TOKEN` definido; a soberania depende de o CPS não ser acessível
   fora da LAN.

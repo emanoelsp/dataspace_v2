@@ -17,7 +17,7 @@
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { getDb } from "@/lib/m2m"
+import { getDb, resourceUrls, type M2MResource } from "@/lib/m2m"
 
 export const runtime = "nodejs"
 
@@ -25,6 +25,12 @@ const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
   "Access-Control-Allow-Headers": "Content-Type",
+}
+
+function resourcesOf(a: Record<string, unknown>) {
+  const resources = (a.resources as M2MResource[] | undefined) ?? []
+  const urls = a.sidecarEndpoint ? resourceUrls(String(a.sidecarEndpoint), String(a.equipmentSlug ?? ""), resources) : {}
+  return resources.map(r => ({ id: r.id, name: r.name, description: r.description ?? "", semanticId: r.semanticId ?? "", url: urls[r.id] ?? "" }))
 }
 
 export async function GET(request: NextRequest) {
@@ -63,7 +69,8 @@ export async function GET(request: NextRequest) {
 
       const caps = (a.capabilities as string[] | undefined) ?? []
       const sems = (a.capabilitySemantics as string[] | undefined) ?? []
-      const blob = `${a.name ?? ""} ${a.description ?? ""} ${a.assetType ?? ""} ${a.irdi ?? ""} ${caps.join(" ")} ${sems.join(" ")}`.toLowerCase()
+      const res = ((a.resources as M2MResource[] | undefined) ?? []).map(r => `${r.id} ${r.name}`)
+      const blob = `${a.name ?? ""} ${a.description ?? ""} ${a.assetType ?? ""} ${a.irdi ?? ""} ${caps.join(" ")} ${sems.join(" ")} ${res.join(" ")}`.toLowerCase()
 
       if (capability && !blob.includes(capability)) return false
       if (q && !blob.includes(q)) return false
@@ -97,6 +104,7 @@ export async function GET(request: NextRequest) {
         // plano de dados (só acessível APÓS negociar um token):
         sidecarEndpoint: a.sidecarEndpoint ?? "",
         dataUrl: a.sidecarEndpoint ? `${String(a.sidecarEndpoint).replace(/\/+$/, "")}/api/proxy/${a.equipmentSlug}/data` : "",
+        resources: resourcesOf(a),
       }
     })
 

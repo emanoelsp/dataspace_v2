@@ -1,10 +1,14 @@
 /**
  * POST /api/m2m/negotiate — negocia contrato e obtém token de acesso.
  *
- * O consumidor (CPS/agente) pede acesso a um ativo alvo. Se a governança do
- * ativo permite concessão automática, o Dataspace: cria o contrato, emite o
- * token com a GOVERNANÇA HERDADA, empurra ao Sidecar do provedor e devolve ao
- * consumidor {token, dataUrl, expiresAt} para trocar dados via PEP.
+ * Segue as MESMAS etapas do fluxo humano, gravando cada uma:
+ *   1. adesão à federação (federationMemberships)
+ *   2. oferta de contrato publicada (contractOffers) com as diretrizes
+ *   3. conexão entre conectores (connectorConnections)
+ *   4. acordo assinado pelo consumidor e pelo provedor (contractAgreements)
+ *   5. credencial de uso (credentialGrants)
+ *   6. token com a GOVERNANÇA HERDADA, empurrado ao Sidecar do provedor
+ * e devolve {token, dataUrl, resourceUrls, expiresAt, steps}.
  * Se a governança exige aprovação manual, devolve {status:"pending", requestId}.
  *
  * Body:
@@ -12,14 +16,17 @@
  *   "consumerParticipantId": "urn:dataspace:participant:plant1:cnc",
  *   "consumerName": "cnc",
  *   "targetAssetId": "<id>"  |  "targetSlug": "oven",
- *   "purpose": "compensação térmica"
+ *   "purpose": "compensação térmica",
+ *   "resources": ["operational", "hcm-episodes"]   // opcional; padrão: todos
  * }
  */
 
 import { NextResponse } from "next/server"
-import { FieldValue } from "firebase-admin/firestore"
+import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import {
   getDb, tokenValue, governanceSnapshotForAsset, sidecarPushToken, apiKeyError,
+  upsertContractOffer, resourceUrls, sidecarSecretForParticipant, SidecarSecretUnavailableError,
+  SIDECAR_ADMIN_SECRET, type M2MResource,
 } from "@/lib/m2m"
 
 export const runtime = "nodejs"
@@ -36,6 +43,46 @@ type Body = {
   targetAssetId?: string
   targetSlug?: string
   purpose?: string
+  resources?: unknown
+}
+
+type Step = { step: string; id: string; status: "created" | "reused" | "skipped" }
+
+/** Admissão do consumidor na federação do ativo (reusa ou cria a adesão). */
+async function ensureMembership(
+  db: Firestore, federationId: string, consumer: string, consumerName: string, purpose: string, steps: Step[],
+): Promise<{ error: string; admissionMode: string } | { membershipId: string }> {
+  if (!federationId) {
+    steps.push({ step: "federation-membership", id: "", status: "skipped" })
+    return { membershipId: "" }
+  }
+  const existing = await db.collection("federationMemberships")
+    .where("federationId", "==", federationId).where("participantId", "==", consumer).limit(1).get()
+  if (!existing.empty && existing.docs[0].data()?.status === "active") {
+    steps.push({ step: "federation-membership", id: existing.docs[0].id, status: "reused" })
+    return { membershipId: existing.docs[0].id }
+  }
+
+  const fedDoc = await db.collection("federations").doc(federationId).get()
+  const fed = fedDoc.data() ?? {}
+  const admissionMode = String(fed.admissionMode ?? "self-service")
+  // quem entrou na federação pelo register (join) já é membro, mesmo sem documento de adesão
+  const joinedByRegister = !(await db.collection("assets")
+    .where("ownerId", "==", consumer).where("federationId", "==", federationId).limit(1).get()).empty
+  if (admissionMode !== "self-service" && !joinedByRegister) {
+    return { error: "The asset federation does not admit new members automatically.", admissionMode }
+  }
+
+  const ref = await db.collection("federationMemberships").add({
+    federationId, federationName: String(fed.name ?? ""),
+    participantId: consumer, requesterId: consumer, requesterName: consumerName,
+    membershipType: admissionMode, status: "active", purpose,
+    requestedAt: FieldValue.serverTimestamp(), approvedAt: FieldValue.serverTimestamp(),
+    ownerId: String(fed.ownerId ?? ""), source: "m2m",
+    createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+  })
+  steps.push({ step: "federation-membership", id: ref.id, status: "created" })
+  return { membershipId: ref.id }
 }
 
 export async function POST(request: Request) {
@@ -47,6 +94,9 @@ export async function POST(request: Request) {
 
   if (!body.consumerParticipantId || (!body.targetAssetId && !body.targetSlug)) {
     return NextResponse.json({ error: "Required: consumerParticipantId and (targetAssetId or targetSlug)" }, { status: 400, headers: CORS })
+  }
+  if (body.resources !== undefined && (!Array.isArray(body.resources) || body.resources.some(r => typeof r !== "string"))) {
+    return NextResponse.json({ error: "resources must be an array of resource ids" }, { status: 400, headers: CORS })
   }
 
   const db = getDb()
@@ -71,6 +121,40 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "Target asset has no equipmentSlug/sidecarEndpoint" }, { status: 409, headers: CORS })
   }
 
+  const consumer = body.consumerParticipantId
+  const consumerName = body.consumerName ?? consumer
+  const providerId = String(asset.ownerId ?? "")
+  const federationId = String(asset.federationId ?? "")
+
+  // ── recursos pedidos (padrão: todos os do ativo) ──
+  const assetResources = (asset.resources as M2MResource[] | undefined) ?? []
+  const requested = (body.resources as string[] | undefined) ?? []
+  const unknown = requested.filter(id => !assetResources.some(r => r.id === id))
+  if (unknown.length) {
+    return NextResponse.json({
+      error: `Unknown resources: ${unknown.join(", ")}`,
+      availableResources: assetResources.map(r => r.id),
+    }, { status: 422, headers: CORS })
+  }
+  const granted = requested.length ? assetResources.filter(r => requested.includes(r.id)) : assetResources
+
+  // ── segredo do Sidecar do provedor ──
+  // Ativo M2M sem segredo próprio (registrado antes dessa versão) não recebe o
+  // segredo global: o provedor precisa refazer o register.
+  let sidecarSecret: string
+  try {
+    const own = await sidecarSecretForParticipant(db, providerId)
+    if (!own && asset.source === "m2m") {
+      return NextResponse.json({
+        error: "The provider organization has no sidecar secret yet. The provider must call /api/m2m/register again.",
+      }, { status: 409, headers: CORS })
+    }
+    sidecarSecret = own ?? SIDECAR_ADMIN_SECRET
+  } catch (err) {
+    if (err instanceof SidecarSecretUnavailableError) return NextResponse.json({ error: err.message }, { status: 503, headers: CORS })
+    throw err
+  }
+
   // ── governança herdada ──
   const gov = await governanceSnapshotForAsset(db, assetId)
   const purpose = (body.purpose ?? "").trim()
@@ -83,10 +167,10 @@ export async function POST(request: Request) {
   // ── admissão: aprovação manual vira solicitação pendente ──
   if (gov?.requiresManualApproval) {
     const reqRef = await db.collection("accessRequests").add({
-      assetId, assetName: asset.name ?? "", assetOwnerId: asset.ownerId ?? "",
-      requesterId: body.consumerParticipantId, requesterName: body.consumerName ?? body.consumerParticipantId,
-      purpose, status: "pending", source: "m2m",
-      federationId: asset.federationId ?? "", federationName: asset.federationName ?? "",
+      assetId, assetName: asset.name ?? "", assetOwnerId: providerId,
+      requesterId: consumer, requesterName: consumerName,
+      purpose, resources: granted.map(r => r.id), status: "pending", source: "m2m",
+      federationId, federationName: asset.federationName ?? "",
       createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
     })
     return NextResponse.json({
@@ -96,19 +180,88 @@ export async function POST(request: Request) {
     }, { status: 202, headers: CORS })
   }
 
-  // ── concessão automática ──
-  const ttlMinutes = gov?.accessTokenTtlMinutes ?? 30
-  const expiresAt = new Date(Date.now() + ttlMinutes * 60 * 1000)
-  const token = tokenValue("m2m")
+  const steps: Step[] = []
 
+  // ── 1) adesão à federação ──
+  const membership = await ensureMembership(db, federationId, consumer, consumerName, purpose, steps)
+  if ("error" in membership) {
+    return NextResponse.json({ error: membership.error, admissionMode: membership.admissionMode }, { status: 403, headers: CORS })
+  }
+
+  // ── 2) oferta de contrato ──
+  const offerSnap = await db.collection("contractOffers").where("assetId", "==", assetId).where("status", "==", "published").limit(1).get()
+  let offerId: string
+  if (!offerSnap.empty) {
+    offerId = offerSnap.docs[0].id
+    steps.push({ step: "contract-offer", id: offerId, status: "reused" })
+  } else {
+    offerId = await upsertContractOffer(db, assetId, asset, gov, FieldValue.serverTimestamp())
+    steps.push({ step: "contract-offer", id: offerId, status: "created" })
+  }
+
+  // ── 3) conexão entre conectores ──
+  const connSnap = await db.collection("connectorConnections")
+    .where("providerParticipantId", "==", providerId).where("consumerParticipantId", "==", consumer).limit(1).get()
+  let connectionId: string
+  if (!connSnap.empty) {
+    const status = String(connSnap.docs[0].data()?.status ?? "")
+    if (status === "revoked" || status === "rejected") {
+      return NextResponse.json({ error: `Connector connection ${status} by the provider.` }, { status: 403, headers: CORS })
+    }
+    connectionId = connSnap.docs[0].id
+    steps.push({ step: "connector-connection", id: connectionId, status: "reused" })
+  } else {
+    const ref = await db.collection("connectorConnections").add({
+      ownerId: providerId, ownerName: asset.ownerName ?? "",
+      providerParticipantId: providerId, providerConnectorDspBaseUrl: "",
+      requesterId: consumer, requesterName: consumerName,
+      consumerParticipantId: consumer, consumerConnectorDspBaseUrl: "",
+      status: "active", approvedAt: FieldValue.serverTimestamp(), source: "m2m",
+      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+    })
+    connectionId = ref.id
+    steps.push({ step: "connector-connection", id: connectionId, status: "created" })
+  }
+
+  // ── 4) acordo assinado pelas duas partes ──
+  const now = Date.now()
+  const validUntil = new Date(now + (gov?.agreementTtlHours ?? 24) * 60 * 60 * 1000)
   const agreementRef = await db.collection("contractAgreements").add({
+    offerId, connectorConnectionId: connectionId,
     assetId, assetName: asset.name ?? "",
-    providerId: asset.ownerId ?? "", providerName: asset.ownerName ?? "",
-    consumerId: body.consumerParticipantId, consumerName: body.consumerName ?? body.consumerParticipantId,
-    federationId: asset.federationId ?? "", federationName: asset.federationName ?? "",
-    purpose, scope: "asset", status: "finalized", source: "m2m",
+    providerId, providerName: asset.ownerName ?? "", providerParticipantId: providerId,
+    consumerId: consumer, consumerName, consumerParticipantId: consumer,
+    requesterId: consumer, requesterName: consumerName,
+    federationId, federationName: asset.federationName ?? "",
+    governancePolicyId: gov?.policyId ?? "",
+    purpose, purposeBindingAccepted: Boolean(gov?.purposeBinding),
+    resources: granted.map(r => r.id),
+    agreementType: "asset", scope: "asset", status: "finalized", source: "m2m",
+    signedByConsumerAt: FieldValue.serverTimestamp(),
+    signedByProviderAt: FieldValue.serverTimestamp(),
+    providerSignature: "auto: governance requiresManualApproval=false",
+    validFrom: FieldValue.serverTimestamp(), validUntil,
+    ownerId: providerId,
     createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
   })
+  steps.push({ step: "contract-agreement", id: agreementRef.id, status: "created" })
+
+  // ── 5) credencial de uso ──
+  const credentialRef = await db.collection("credentialGrants").add({
+    participantId: consumer, requesterId: consumer, requesterName: consumerName,
+    agreementId: agreementRef.id, assetId, federationId,
+    credentialType: "usage", status: "active",
+    issuedAt: FieldValue.serverTimestamp(), expiresAt: validUntil,
+    ownerId: providerId, ownerName: asset.ownerName ?? "", source: "m2m",
+    createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+  })
+  steps.push({ step: "credential-grant", id: credentialRef.id, status: "created" })
+
+  // ── 6) token (nunca além da validade do acordo) ──
+  const ttlMinutes = gov?.accessTokenTtlMinutes ?? 30
+  const expiresAt = new Date(Math.min(now + ttlMinutes * 60 * 1000, validUntil.getTime()))
+  const token = tokenValue("m2m")
+  const permissions = ["data", "aas", ...granted.map(r => r.id)]
 
   const governance = gov
     ? { policyId: gov.policyId, accessTokenTtlMinutes: gov.accessTokenTtlMinutes,
@@ -118,42 +271,54 @@ export async function POST(request: Request) {
 
   const sidecarTokenId = await sidecarPushToken(sidecarEndpoint, {
     token,
-    federationId: String(asset.federationId ?? ""),
+    federationId,
     federationName: String(asset.federationName ?? ""),
     assetId, assetName: String(asset.name ?? ""),
     equipmentType: slug,
-    dataOwnerId: String(asset.ownerId ?? ""), dataOwnerName: String(asset.ownerName ?? ""),
-    dataClientId: body.consumerParticipantId, dataClientName: body.consumerName ?? body.consumerParticipantId,
+    dataOwnerId: providerId, dataOwnerName: String(asset.ownerName ?? ""),
+    dataClientId: consumer, dataClientName: consumerName,
     expiresAt: expiresAt.toISOString(),
     governanceAcceptedAt: new Date().toISOString(),
     contractRef: agreementRef.id,
-    permissions: ["data", "aas"],
+    permissions,
     governance,
-  })
+  }, sidecarSecret)
 
-  await db.collection("accessTokens").add({
+  const tokenRef = await db.collection("accessTokens").add({
     token, assetId, assetName: asset.name ?? "",
-    contractAgreementId: agreementRef.id,
-    requesterId: body.consumerParticipantId, requesterName: body.consumerName ?? body.consumerParticipantId,
-    providerId: asset.ownerId ?? "",
-    federationId: asset.federationId ?? "",
+    contractAgreementId: agreementRef.id, agreementId: agreementRef.id,
+    credentialGrantId: credentialRef.id, connectorConnectionId: connectionId,
+    governancePolicyId: gov?.policyId ?? "",
+    requesterId: consumer, requesterName: consumerName,
+    providerId, ownerId: providerId,
+    federationId,
     sidecarEndpoint, equipmentSlug: slug, sidecarTokenId: sidecarTokenId ?? "",
+    permissions,
     status: "active", scope: "data:read", purpose, source: "m2m",
     issuedAt: FieldValue.serverTimestamp(), expiresAt,
   })
+  steps.push({ step: "access-token", id: tokenRef.id, status: "created" })
 
+  const base = sidecarEndpoint.replace(/\/+$/, "")
   return NextResponse.json({
     status: "granted",
     token,
     tokenType: "Bearer",
-    dataUrl: `${sidecarEndpoint.replace(/\/+$/, "")}/api/proxy/${slug}/data`,
-    aasUrl: `${sidecarEndpoint.replace(/\/+$/, "")}/api/proxy/${slug}/aas`,
+    dataUrl: `${base}/api/proxy/${slug}/data`,
+    aasUrl: `${base}/api/proxy/${slug}/aas`,
+    resourceUrls: resourceUrls(sidecarEndpoint, slug, granted),
     sidecarEndpoint, equipmentSlug: slug,
     expiresAt: expiresAt.toISOString(),
     contractRef: agreementRef.id,
+    agreementValidUntil: validUntil.toISOString(),
+    offerId,
+    credentialGrantId: credentialRef.id,
     sidecarTokenId: sidecarTokenId ?? null,
+    permissions,
     governance: governance ?? null,
-    usage: `GET {dataUrl}  Authorization: Bearer {token}`,
+    steps,
+    usage: "GET {dataUrl} or any resourceUrls entry with Authorization: Bearer {token}",
+    validate: `GET /api/m2m/agreement?contractRef=${agreementRef.id}`,
   }, { headers: CORS })
 }
 

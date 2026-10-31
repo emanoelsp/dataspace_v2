@@ -7,6 +7,10 @@
  * re-registra cada CPS nele. Tokens já emitidos continuam no `.data/` do
  * Sidecar; aqui só atualizamos o endereço guardado nos `accessTokens` ativos.
  *
+ * Exige o segredo do Sidecar da organização em X-Sidecar-Secret (o mesmo do
+ * register): sem ele ninguém redireciona os CPS de outra organização, e o
+ * segredo só é enviado à nova URL por quem já o conhece.
+ *
  * Body:
  * {
  *   "organization": "IFSC-GASPAR",
@@ -19,7 +23,8 @@ import { NextResponse } from "next/server"
 import { FieldValue } from "firebase-admin/firestore"
 import {
   getDb, slugify, participantIdFor, sidecarRegisterEquipment,
-  M2M_CORS, M2M_OWNER_PREFIX, apiKeyError,
+  M2M_CORS, M2M_ORGS, M2M_OWNER_PREFIX, apiKeyError, decryptSidecarSecret, secretsMatch,
+  type M2MResource,
 } from "@/lib/m2m"
 
 export const runtime = "nodejs"
@@ -49,6 +54,20 @@ export async function POST(request: Request) {
 
   const organization = body.organization.trim()
   const sidecarEndpoint = body.sidecarEndpoint.replace(/\/+$/, "")
+
+  const orgRef = db.collection(M2M_ORGS).doc(slugify(organization))
+  const orgDoc = await orgRef.get()
+  if (!orgDoc.exists) {
+    return NextResponse.json({
+      error: `Organization "${organization}" has no sidecar secret yet. Call /api/m2m/register once to create it.`,
+    }, { status: 404, headers: M2M_CORS })
+  }
+  const sidecarSecret = decryptSidecarSecret(String(orgDoc.data()?.sidecarSecretEnc ?? ""))
+  if (!sidecarSecret) return NextResponse.json({ error: "Sidecar secret store unavailable (SIDECAR_SECRETS_KEY)" }, { status: 503, headers: M2M_CORS })
+  const providedSecret = (request.headers.get("x-sidecar-secret") ?? "").trim()
+  if (!providedSecret || !secretsMatch(providedSecret, sidecarSecret)) {
+    return NextResponse.json({ error: "Missing or invalid X-Sidecar-Secret header." }, { status: 403, headers: M2M_CORS })
+  }
   const orgPrefix = `${M2M_OWNER_PREFIX}${slugify(organization)}:`
   const onlyParticipant = body.equipmentSlug ? participantIdFor(organization, slugify(body.equipmentSlug)) : ""
 
@@ -68,6 +87,7 @@ export async function POST(request: Request) {
   }
 
   const patch = { sidecarEndpoint, updatedAt: FieldValue.serverTimestamp() }
+  await orgRef.set(patch, { merge: true })
   const updated = { connectors: 0, federations: 0, assets: 0, accessTokens: 0 }
   const equipment: Array<{ equipmentSlug: string; assetId: string; sidecarRegistered: boolean }> = []
 
@@ -102,7 +122,8 @@ export async function POST(request: Request) {
             id: slug, name: String(a.name ?? slug), baseUrl,
             eclassIrdi: a.irdi ? String(a.irdi) : undefined,
             dataOwnerId: participantId, dataOwnerName: String(a.ownerName ?? organization),
-          })
+            resources: ((a.resources as M2MResource[] | undefined) ?? []).map(({ id, name, path }) => ({ id, name, path })),
+          }, sidecarSecret)
         : false
       equipment.push({ equipmentSlug: slug, assetId: asset.id, sidecarRegistered })
     }

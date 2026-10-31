@@ -1,5 +1,11 @@
 # Sidecar do Marcos — `sidecarRegistered: false`
 
+> **Atualização (31/10/2026):** o segredo do Sidecar passou a ser **por
+> organização** (não mais o `SIDECAR_ADMIN_SECRET` global), os CPS ganharam
+> `resources` e a negociação grava todas as etapas do contrato. O passo a passo
+> atual está em `docs/ATUALIZACAO-SIDECAR-MARCOS.md`; este documento fica como
+> histórico do diagnóstico de `sidecarRegistered: false`.
+
 Situação: o `POST /api/m2m/register` do **CPS-LAI-01** funcionou (ativo
 `ciEehJ5tmlsy7MxhyUeh`, slug `cpslai1`, participante
 `urn:dataspace:participant:ifsc-gaspar:cpslai1`), mas o Dataspace não conseguiu
@@ -190,7 +196,7 @@ Com o passo 3 resolvido, o restante funciona sem configuração extra:
 3. **Consumir:** `GET https://notified-rotary-inch-investigate.trycloudflare.com/api/proxy/cpslai1/data`
    com `Authorization: Bearer <token>`
 
-Detalhes de cada chamada: `docs/CONTRATO-REST-SIDECAR.md`, seções 6.2 a 6.4.
+Detalhes de cada chamada: `docs/CONTRATO-REST-SIDECAR.md`, seções 6.2 a 6.6.
 
 ---
 
@@ -212,7 +218,7 @@ curl -X POST https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint \
 - O Sidecar precisa estar no ar com o `SIDECAR_ADMIN_SECRET` correto antes da chamada.
 - Tokens já emitidos continuam válidos; os `dataUrl` passam a usar a URL nova.
 
-Detalhes: `docs/CONTRATO-REST-SIDECAR.md`, seção 6.5.
+Detalhes: `docs/CONTRATO-REST-SIDECAR.md`, seção 6.7.
 
 ---
 

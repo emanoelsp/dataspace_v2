@@ -22,8 +22,17 @@
  *                | { "join": "<federationId>" }
  *                | { "joinByName": "plant1 — Utilities" },
  *   "governance": { "accessTokenTtlMinutes": 15, "requiresManualApproval": false,
- *                   "purposeBinding": false, "revocationMode": "ttl-expiry" }
+ *                   "purposeBinding": false, "revocationMode": "ttl-expiry" },
+ *   "resources": [                                 // opcional: recursos do CPS
+ *     { "id": "operational", "name": "Operational Data", "path": "/api/v1/operational" }
+ *   ]
  * }
+ *
+ * Segredo do Sidecar (header X-Sidecar-Secret): no PRIMEIRO register de uma
+ * organização, o valor enviado vira o segredo do Sidecar dela (≥ 32 chars); sem
+ * o header, o Dataspace gera um e devolve UMA vez em `sidecarSecret`. A partir
+ * daí todo register dessa organização exige o mesmo header — ninguém mais
+ * consegue redirecionar os CPS dela nem receber o segredo.
  */
 
 import { NextResponse } from "next/server"
@@ -31,7 +40,9 @@ import { FieldValue } from "firebase-admin/firestore"
 import {
   getDb, slugify, participantIdFor, harvestCapabilities,
   sidecarRegisterEquipment, accessModelForType, type FederationType,
-  M2M_CORS, apiKeyError,
+  M2M_CORS, M2M_ORGS, apiKeyError, parseResources, resourceUrls,
+  generateSidecarSecret, isAcceptableSidecarSecret, encryptSidecarSecret,
+  decryptSidecarSecret, secretsMatch, governanceSnapshotForAsset, upsertContractOffer,
 } from "@/lib/m2m"
 
 export const runtime = "nodejs"
@@ -48,6 +59,7 @@ type Body = {
   description?: string
   federation?: { create?: { name?: string; type?: FederationType }; join?: string; joinByName?: string }
   governance?: { accessTokenTtlMinutes?: number; requiresManualApproval?: boolean; purposeBinding?: boolean; revocationMode?: string }
+  resources?: unknown
 }
 
 export async function POST(request: Request) {
@@ -64,6 +76,9 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "baseUrl and sidecarEndpoint must be valid URLs" }, { status: 400, headers: M2M_CORS })
   }
 
+  const resources = parseResources(body.resources)
+  if (typeof resources === "string") return NextResponse.json({ error: resources }, { status: 400, headers: M2M_CORS })
+
   const db = getDb()
   if (!db) return NextResponse.json({ error: "Server credentials not configured (FIREBASE_SERVICE_ACCOUNT_JSON)" }, { status: 503, headers: M2M_CORS })
 
@@ -72,6 +87,37 @@ export async function POST(request: Request) {
   const participantId = participantIdFor(organization, slug)
   const sidecarEndpoint = body.sidecarEndpoint.replace(/\/+$/, "")
   const baseUrl = body.baseUrl.replace(/\/api\/(data|aas)\/?$/i, "").replace(/\/+$/, "")
+
+  // ── segredo do Sidecar da organização (antes de qualquer escrita) ──
+  const orgSlug = slugify(organization)
+  const providedSecret = (request.headers.get("x-sidecar-secret") ?? "").trim()
+  const orgRef = db.collection(M2M_ORGS).doc(orgSlug)
+  const orgDoc = await orgRef.get()
+  let sidecarSecret: string
+  let issuedSecret: string | null = null
+  if (orgDoc.exists) {
+    const stored = decryptSidecarSecret(String(orgDoc.data()?.sidecarSecretEnc ?? ""))
+    if (!stored) return NextResponse.json({ error: "Sidecar secret store unavailable (SIDECAR_SECRETS_KEY)" }, { status: 503, headers: M2M_CORS })
+    if (!providedSecret || !secretsMatch(providedSecret, stored)) {
+      return NextResponse.json({
+        error: `Organization "${organization}" is already registered. Send its sidecar secret in the X-Sidecar-Secret header.`,
+      }, { status: 403, headers: M2M_CORS })
+    }
+    sidecarSecret = stored
+  } else {
+    if (providedSecret && !isAcceptableSidecarSecret(providedSecret)) {
+      return NextResponse.json({ error: "X-Sidecar-Secret must have at least 32 characters." }, { status: 400, headers: M2M_CORS })
+    }
+    sidecarSecret = providedSecret || generateSidecarSecret()
+    const sidecarSecretEnc = encryptSidecarSecret(sidecarSecret)
+    if (!sidecarSecretEnc) return NextResponse.json({ error: "Sidecar secret store unavailable (SIDECAR_SECRETS_KEY)" }, { status: 503, headers: M2M_CORS })
+    await orgRef.set({
+      organization, sidecarSecretEnc, source: "m2m",
+      createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
+    })
+    if (!providedSecret) issuedSecret = sidecarSecret
+  }
+  await orgRef.set({ sidecarEndpoint, updatedAt: FieldValue.serverTimestamp() }, { merge: true })
 
   // ── colheita de capacidades (UDDI) ──
   const h = await harvestCapabilities(baseUrl)
@@ -180,7 +226,7 @@ export async function POST(request: Request) {
     semanticId: "", aasId: h.aasId, irdi, semanticModel: "AAS / IEC 63278",
     apiEndpoint: `${baseUrl}/api/data`, aasEndpoint: `${baseUrl}/api/aas`,
     dataFormat: "JSON", exchangeMode: "stream", accessType: "Federation",
-    capabilities, capabilitySemantics: h.capabilitySemantics,
+    capabilities, capabilitySemantics: h.capabilitySemantics, resources,
     publishedInCatalog: true, status: "available", source: "m2m",
     updatedAt: FieldValue.serverTimestamp(),
     ownerId: participantId, ownerName: organization,
@@ -217,11 +263,17 @@ export async function POST(request: Request) {
     governanceId = ref.id
   }
 
-  // ── 6) registra o CPS no Sidecar PEP ──
+  // ── 6) oferta de contrato com as diretrizes da governança ──
+  const contractOfferId = await upsertContractOffer(
+    db, assetId, assetFields, await governanceSnapshotForAsset(db, assetId), FieldValue.serverTimestamp(),
+  )
+
+  // ── 7) registra o CPS no Sidecar PEP (com o segredo da organização) ──
   const sidecarRegistered = await sidecarRegisterEquipment(sidecarEndpoint, {
     id: slug, name: body.name, baseUrl, eclassIrdi: irdi || undefined,
     dataOwnerId: participantId, dataOwnerName: organization,
-  })
+    resources: resources.map(({ id, name, path }) => ({ id, name, path })),
+  }, sidecarSecret)
 
   return NextResponse.json({
     ok: true,
@@ -232,8 +284,15 @@ export async function POST(request: Request) {
     assetId,
     equipmentSlug: slug,
     governanceId,
+    contractOfferId,
     capabilities,
+    resources: resources.map(({ id, name }) => ({ id, name })),
+    resourceUrls: resourceUrls(sidecarEndpoint, slug, resources),
     sidecarRegistered,
+    ...(issuedSecret ? {
+      sidecarSecret: issuedSecret,
+      sidecarSecretNotice: "Shown only once. Set it as SIDECAR_ADMIN_SECRET in the Sidecar .env.local, restart the Sidecar and send it in X-Sidecar-Secret on every register/sidecar-endpoint call.",
+    } : {}),
     dataUrl: `${sidecarEndpoint}/api/proxy/${slug}/data`,
     hint: "Use /api/m2m/discover para achar outros CPS e /api/m2m/negotiate para obter um token.",
   }, { headers: M2M_CORS })

@@ -11,7 +11,7 @@
  * humano — entidades M2M aparecem no mesmo catálogo e passam pelo mesmo PEP.
  */
 
-import { randomBytes } from "node:crypto"
+import { createCipheriv, createDecipheriv, randomBytes, timingSafeEqual } from "node:crypto"
 import { getFirestore, type Firestore } from "firebase-admin/firestore"
 import { getAdminApp } from "@/lib/firebase-admin"
 import { mapLegacyFederationType } from "@/lib/intra-dataspace"
@@ -22,7 +22,7 @@ export const M2M_OWNER_PREFIX = "urn:dataspace:participant:"
 export const M2M_CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-M2M-Key",
+  "Access-Control-Allow-Headers": "Content-Type, X-M2M-Key, X-Sidecar-Secret",
 }
 
 /**
@@ -107,12 +107,16 @@ export async function harvestCapabilities(baseUrl: string): Promise<HarvestResul
 /** Registra o CPS no Sidecar PEP (equipment-store). */
 export async function sidecarRegisterEquipment(
   sidecarEndpoint: string,
-  eq: { id: string; name: string; baseUrl: string; eclassIrdi?: string; dataOwnerId?: string; dataOwnerName?: string },
+  eq: {
+    id: string; name: string; baseUrl: string; eclassIrdi?: string; dataOwnerId?: string; dataOwnerName?: string
+    resources?: Array<{ id: string; name: string; path: string }>
+  },
+  secret = SIDECAR_ADMIN_SECRET,
 ): Promise<boolean> {
   try {
     const res = await fetch(`${sidecarEndpoint.replace(/\/+$/, "")}/api/equipment`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SIDECAR_ADMIN_SECRET}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
       body: JSON.stringify(eq),
       signal: AbortSignal.timeout(4000),
     })
@@ -139,11 +143,15 @@ export type SidecarTokenPayload = {
 }
 
 /** Empurra o token ao Sidecar do provedor; retorna o id do token no sidecar (para revogação). */
-export async function sidecarPushToken(sidecarEndpoint: string, payload: SidecarTokenPayload): Promise<string | null> {
+export async function sidecarPushToken(
+  sidecarEndpoint: string,
+  payload: SidecarTokenPayload,
+  secret = SIDECAR_ADMIN_SECRET,
+): Promise<string | null> {
   try {
     const res = await fetch(`${sidecarEndpoint.replace(/\/+$/, "")}/api/tokens`, {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SIDECAR_ADMIN_SECRET}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
       body: JSON.stringify(payload),
       signal: AbortSignal.timeout(4000),
     })
@@ -154,11 +162,15 @@ export async function sidecarPushToken(sidecarEndpoint: string, payload: Sidecar
 }
 
 /** Revoga o token no Sidecar (unplug / failover). */
-export async function sidecarRevokeToken(sidecarEndpoint: string, sidecarTokenId: string): Promise<boolean> {
+export async function sidecarRevokeToken(
+  sidecarEndpoint: string,
+  sidecarTokenId: string,
+  secret = SIDECAR_ADMIN_SECRET,
+): Promise<boolean> {
   try {
     const res = await fetch(`${sidecarEndpoint.replace(/\/+$/, "")}/api/tokens/${sidecarTokenId}`, {
       method: "PATCH",
-      headers: { "Content-Type": "application/json", Authorization: `Bearer ${SIDECAR_ADMIN_SECRET}` },
+      headers: { "Content-Type": "application/json", Authorization: `Bearer ${secret}` },
       body: JSON.stringify({ action: "revoke" }),
       signal: AbortSignal.timeout(4000),
     })
@@ -177,6 +189,8 @@ export async function governanceSnapshotForAsset(db: Firestore, assetId: string)
   return {
     policyId: g.id,
     accessTokenTtlMinutes: (g.data.accessTokenTtlMinutes as number | undefined) ?? 60,
+    agreementTtlHours: (g.data.agreementTtlHours as number | undefined) ?? 24,
+    usagePeriods: (g.data.usagePeriods as string | undefined) ?? "",
     purposeBinding: Boolean(g.data.purposeBinding),
     requiresManualApproval: Boolean(g.data.requiresManualApproval),
     revocationMode: (g.data.revocationMode as string | undefined) ?? "owner-manual",
@@ -188,4 +202,170 @@ export type FederationType = "Open" | "Consortium" | "Private"
 
 export function accessModelForType(type: FederationType) {
   return mapLegacyFederationType(type)
+}
+
+// ── Segredo por Sidecar (um por organização M2M) ──────────────────────────
+// Cada organização tem o seu Sidecar; a nuvem fala com ele usando um segredo
+// exclusivo, nunca o SIDECAR_ADMIN_SECRET global. O segredo fica cifrado
+// (AES-256-GCM, chave SIDECAR_SECRETS_KEY só na Vercel) porque precisa ser
+// reenviado em claro no header Authorization.
+
+export const M2M_ORGS = "m2mOrganizations"
+const MIN_SIDECAR_SECRET_LENGTH = 32
+
+export function orgSlugFromParticipant(participantId: string): string {
+  if (!participantId.startsWith(M2M_OWNER_PREFIX)) return ""
+  return participantId.slice(M2M_OWNER_PREFIX.length).split(":")[0] ?? ""
+}
+
+export function generateSidecarSecret(): string {
+  return `scs_${randomBytes(24).toString("hex")}`
+}
+
+export function isAcceptableSidecarSecret(secret: string): boolean {
+  return secret.length >= MIN_SIDECAR_SECRET_LENGTH
+}
+
+function secretsKey(): Buffer | null {
+  const hex = process.env.SIDECAR_SECRETS_KEY ?? ""
+  return /^[0-9a-f]{64}$/i.test(hex) ? Buffer.from(hex, "hex") : null
+}
+
+export function encryptSidecarSecret(plain: string): string | null {
+  const key = secretsKey()
+  if (!key) return null
+  const iv = randomBytes(12)
+  const cipher = createCipheriv("aes-256-gcm", key, iv)
+  const enc = Buffer.concat([cipher.update(plain, "utf8"), cipher.final()])
+  return [iv, cipher.getAuthTag(), enc].map(b => b.toString("base64")).join(".")
+}
+
+export function decryptSidecarSecret(payload: string): string | null {
+  const key = secretsKey()
+  const [iv, tag, enc] = payload.split(".").map(p => Buffer.from(p, "base64"))
+  if (!key || !iv || !tag || !enc) return null
+  try {
+    const decipher = createDecipheriv("aes-256-gcm", key, iv)
+    decipher.setAuthTag(tag)
+    return Buffer.concat([decipher.update(enc), decipher.final()]).toString("utf8")
+  } catch { return null }
+}
+
+export function secretsMatch(a: string, b: string): boolean {
+  const ba = Buffer.from(a)
+  const bb = Buffer.from(b)
+  return ba.length === bb.length && timingSafeEqual(ba, bb)
+}
+
+export class SidecarSecretUnavailableError extends Error {}
+
+/**
+ * Segredo do Sidecar da organização dona do participante; null = organização
+ * sem segredo próprio. Lança SidecarSecretUnavailableError se o segredo existe
+ * mas não pode ser decifrado — nunca cair no segredo global nesse caso.
+ */
+export async function sidecarSecretForParticipant(db: Firestore, participantId: string): Promise<string | null> {
+  const orgSlug = orgSlugFromParticipant(participantId)
+  if (!orgSlug) return null
+  const doc = await db.collection(M2M_ORGS).doc(orgSlug).get()
+  const enc = doc.exists ? (doc.data()?.sidecarSecretEnc as string | undefined) : undefined
+  if (!enc) return null
+  const secret = decryptSidecarSecret(enc)
+  if (!secret) throw new SidecarSecretUnavailableError("Sidecar secret store unavailable (SIDECAR_SECRETS_KEY)")
+  return secret
+}
+
+// ── Recursos de dados de um CPS (ex.: 5 catálogos na mesma API) ───────────
+
+export type M2MResource = { id: string; name: string; path: string; description?: string; semanticId?: string }
+
+const RESOURCE_ID_RE = /^[a-z0-9][a-z0-9-]{0,47}$/
+const RESERVED_RESOURCE_IDS = new Set(["data", "aas"])
+const MAX_RESOURCES = 32
+
+/** Valida e normaliza `resources` do register. Retorna a mensagem de erro (string) ou a lista. */
+export function parseResources(input: unknown): M2MResource[] | string {
+  if (input === undefined) return []
+  if (!Array.isArray(input)) return "resources must be an array"
+  if (input.length > MAX_RESOURCES) return `resources: at most ${MAX_RESOURCES} items`
+  const seen = new Set<string>()
+  const out: M2MResource[] = []
+  for (const raw of input) {
+    const r = (raw ?? {}) as Record<string, unknown>
+    const id = String(r.id ?? "").trim()
+    const path = String(r.path ?? "").trim()
+    if (!RESOURCE_ID_RE.test(id)) return `resources: invalid id "${id}" (lowercase slug: a-z, 0-9, hyphen)`
+    if (RESERVED_RESOURCE_IDS.has(id)) return `resources: id "${id}" is reserved`
+    if (seen.has(id)) return `resources: duplicated id "${id}"`
+    if (!path.startsWith("/") || path.includes("..") || path.includes("://")) {
+      return `resources: path of "${id}" must be an absolute path on the CPS (e.g. /api/v1/operational)`
+    }
+    seen.add(id)
+    out.push({
+      id, path,
+      name: String(r.name ?? id).trim() || id,
+      ...(r.description ? { description: String(r.description) } : {}),
+      ...(r.semanticId ? { semanticId: String(r.semanticId) } : {}),
+    })
+  }
+  return out
+}
+
+export function resourceUrls(sidecarEndpoint: string, slug: string, resources: M2MResource[]): Record<string, string> {
+  const base = `${sidecarEndpoint.replace(/\/+$/, "")}/api/proxy/${slug}`
+  return Object.fromEntries(resources.map(r => [r.id, `${base}/${r.id}`]))
+}
+
+// ── Oferta de contrato (mesma forma do fluxo humano) ──────────────────────
+
+type GovernanceSnapshot = NonNullable<Awaited<ReturnType<typeof governanceSnapshotForAsset>>>
+
+export function contractOfferPayload(asset: Record<string, unknown>, gov: GovernanceSnapshot | undefined) {
+  return {
+    purpose: String(asset.purpose ?? ""),
+    accessType: String(asset.accessType ?? ""),
+    dataFormat: String(asset.dataFormat ?? ""),
+    exchangeMode: String(asset.exchangeMode ?? ""),
+    semanticId: String(asset.semanticId ?? ""),
+    aasId: String(asset.aasId ?? ""),
+    irdi: String(asset.irdi ?? ""),
+    governancePolicyId: gov?.policyId ?? "",
+    governancePolicies: gov?.conditions ?? "",
+    usagePeriods: gov?.usagePeriods ?? "",
+    revocation: gov?.revocationMode ?? "ttl-expiry",
+    purposeBinding: Boolean(gov?.purposeBinding),
+    requiresManualApproval: Boolean(gov?.requiresManualApproval),
+    validForHours: gov?.agreementTtlHours ?? 24,
+    accessTokenTtlMinutes: gov?.accessTokenTtlMinutes ?? 30,
+    revocable: (gov?.revocationMode ?? "ttl-expiry") !== "time-expiry",
+    resources: ((asset.resources as M2MResource[] | undefined) ?? []).map(r => ({ id: r.id, name: r.name })),
+  }
+}
+
+/** Publica (ou atualiza) a oferta de contrato padrão do ativo. Retorna o id da oferta. */
+export async function upsertContractOffer(
+  db: Firestore,
+  assetId: string,
+  asset: Record<string, unknown>,
+  gov: GovernanceSnapshot | undefined,
+  timestamp: unknown,
+): Promise<string> {
+  const fields = {
+    scope: "asset", scopeId: assetId, assetId,
+    federationId: String(asset.federationId ?? ""),
+    ownerId: String(asset.ownerId ?? ""), ownerName: String(asset.ownerName ?? ""),
+    governancePolicyId: gov?.policyId ?? "",
+    policyType: "contract",
+    policyPayload: contractOfferPayload(asset, gov),
+    visibility: "members", status: "published", version: 1, source: "m2m",
+    updatedAt: timestamp,
+  }
+  const snap = await db.collection("contractOffers").where("assetId", "==", assetId).where("status", "==", "published").limit(1).get()
+  if (!snap.empty) {
+    const current = snap.docs[0]
+    await current.ref.set({ ...fields, version: Number(current.data()?.version ?? 1) }, { merge: true })
+    return current.id
+  }
+  const ref = await db.collection("contractOffers").add({ ...fields, createdAt: timestamp })
+  return ref.id
 }

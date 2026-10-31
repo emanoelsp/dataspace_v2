@@ -66,6 +66,7 @@ export class Store {
   nextId() { return `id_${++this.seq}` }
   docs(col: string) { if (!this.cols.has(col)) this.cols.set(col, new Map()); return this.cols.get(col)! }
   collection(col: string) { return new CollectionRef(this, col) }
+  clear() { this.cols.clear() }
 }
 
 export const store = new Store()
