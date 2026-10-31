@@ -163,9 +163,11 @@ describe("register — sidecar secret per organization", () => {
     const body = { organization: "IFSC-GASPAR", sidecarSecret: OWN_SECRET }
 
     expect((await POST(post(body))).status).toBe(503) // M2M_ADMIN_KEY ausente: bloqueado
-    process.env.M2M_ADMIN_KEY = "admin_key_for_tests_0123456789"
+    process.env.M2M_ADMIN_KEY = "admin"
+    expect((await POST(post(body, { "X-M2M-Admin-Key": "admin" }))).status).toBe(503) // chave fraca: bloqueado
+    process.env.M2M_ADMIN_KEY = "admin_key_for_tests_0123456789abcdefghij"
     expect((await POST(post(body, { "X-M2M-Admin-Key": "wrong" }))).status).toBe(401)
-    const ok = await POST(post(body, { "X-M2M-Admin-Key": "admin_key_for_tests_0123456789" }))
+    const ok = await POST(post(body, { "X-M2M-Admin-Key": "admin_key_for_tests_0123456789abcdefghij" }))
     expect(ok.status).toBe(200)
     expect((await ok.json()).sidecarSecret).toBeUndefined()
 

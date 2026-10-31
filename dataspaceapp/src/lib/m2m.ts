@@ -418,12 +418,15 @@ export async function m2mConnectorsOfOrg(db: Firestore, organization: string, on
 
 /**
  * Operações de administrador (definir/resetar o segredo de uma organização).
- * Exige M2M_ADMIN_KEY no ambiente e o header X-M2M-Admin-Key igual; sem a
- * variável, a operação fica bloqueada. Retorna [mensagem, status] ou null.
+ * Exige M2M_ADMIN_KEY no ambiente (≥ 32 caracteres — uma chave fraca como
+ * "admin" deixaria qualquer um resetar segredos) e o header X-M2M-Admin-Key
+ * igual; sem isso, a operação fica bloqueada. Retorna [mensagem, status] ou null.
  */
 export function adminKeyError(request: Request): [string, number] | null {
-  const required = process.env.M2M_ADMIN_KEY
-  if (!required) return ["Admin operations are disabled (M2M_ADMIN_KEY not configured).", 503]
+  const required = process.env.M2M_ADMIN_KEY ?? ""
+  if (required.length < MIN_SIDECAR_SECRET_LENGTH) {
+    return ["Admin operations are disabled (M2M_ADMIN_KEY missing or shorter than 32 characters).", 503]
+  }
   const provided = request.headers.get("x-m2m-admin-key") ?? ""
   return provided && secretsMatch(provided, required) ? null : ["Missing or invalid X-M2M-Admin-Key header.", 401]
 }
