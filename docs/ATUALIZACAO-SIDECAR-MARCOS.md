@@ -197,8 +197,10 @@ curl -X POST https://dataspace-v2.vercel.app/api/m2m/register \
     "organization": "IFSC-GASPAR",
     "equipmentSlug": "cpslai1",
     "assetType": "Conveyor",
-    "federation": { "joinByName": "ifsc" },
-    "governance": { "accessTokenTtlMinutes": 30, "requiresManualApproval": false },
+    "eclassIrdi": "0173-1#01-...",
+    "capabilities": ["operational", "cognitive", "ppu-events", "hcm-episodes", "hcm-knowledge"],
+    "federation": { "create": { "name": "IFSC", "type": "Open" } },
+    "governance": { "accessTokenTtlMinutes": 30, "requiresManualApproval": false, "purposeBinding": false },
     "resources": [
       { "id": "operational",   "name": "Operational Data",    "path": "/api/v1/operational" },
       { "id": "cognitive",     "name": "Cognitive Knowledge", "path": "/api/v1/cognitive" },
@@ -209,10 +211,15 @@ curl -X POST https://dataspace-v2.vercel.app/api/m2m/register \
   }'
 ```
 
-- Se a federação `ifsc` ainda não existir, troque por
-  `"federation": { "create": { "name": "ifsc", "type": "Open" } }`.
-- CPS-LAI-02: `"equipmentSlug": "cpslai2"`, `"baseUrl": "http://127.0.0.1:3102"`.
-- CPS-LAI-03: `"equipmentSlug": "cpslai3"`, `"baseUrl": "http://127.0.0.1:3103"`.
+- **Só o primeiro CPS cria a federação** (`create`). A federação IFSC antiga foi
+  apagada: `joinByName` no primeiro register volta `404 Federation not found`.
+- CPS-LAI-02: `"equipmentSlug": "cpslai2"`, `"baseUrl": "http://127.0.0.1:3102"`,
+  `"federation": { "joinByName": "IFSC" }`.
+- CPS-LAI-03: `"equipmentSlug": "cpslai3"`, `"baseUrl": "http://127.0.0.1:3103"`,
+  `"federation": { "joinByName": "IFSC" }`.
+- `assetType`, `eclassIrdi` e `capabilities` vão explícitos: com `baseUrl` em
+  `127.0.0.1` a Vercel não lê o AAS do CPS, e sem `capabilities` a descoberta por
+  `?capability=` não encontra o CPS (só `?q=` por nome/recurso).
 - **Mantenha `requiresManualApproval: false`** — em M2M não há usuário logado
   para aprovar pedidos pendentes.
 
@@ -224,8 +231,42 @@ curl https://<tunel>.trycloudflare.com/api/equipment   # cada CPS com "resources
 ```
 
 Registre também a **ACSM como consumidora**, para ter um `participantId`
-(ex.: `"equipmentSlug": "acsm"`, sem `resources` se ela não expõe dados). Na
-mesma organização, ela usa o mesmo segredo.
+(ex.: `"equipmentSlug": "acsm"`, sem `resources` se ela não expõe dados,
+`"federation": { "joinByName": "IFSC" }`). Na mesma organização, ela usa o mesmo
+segredo.
+
+### C.1 Ajustes na tela "Data Publication" da ACSM
+
+Revisão da tela de publicação (31/10/2026). O fluxo `resources[]` está certo;
+para o register funcionar:
+
+1. **Federation Registration:** no `cpslai1`, *criar* a federação IFSC
+   (`create`). "Join existing federation by name" só nos CPS seguintes e na ACSM.
+2. **Sidecar HTTPS Endpoint:** preencher com a URL atual do cloudflared (não o
+   placeholder `https://your-sidecar.example`). Sem ela, `sidecarRegistered: false`.
+3. **Recursos:** marcar os 5. Sem recurso o CPS fica só com `/data` e `/aas`, que
+   o CPS não expõe (ele usa `/api/v1/...`) — a leitura daria 404.
+4. **Segredo da organização:** o valor guardado no backend da ACSM tem que ser
+   **idêntico** ao `SIDECAR_ADMIN_SECRET` do `.env.local` do Sidecar (Parte B).
+   Diferente: o register passa, mas o Sidecar recusa o CPS e os tokens.
+5. **Incluir `assetType`, `eclassIrdi` e `capabilities`** no formulário (ou fixos
+   no JSON gerado), pelo motivo acima.
+6. **"ACSM Administrative Credential":** se for o login da própria ACSM, ok. A
+   chave de administrador do Dataspace **não** é usada no register — ele só
+   precisa de `X-M2M-Key` (Parte B.0) e `X-Sidecar-Secret` (Parte B).
+7. **Não usar "Provider Registration — Legacy identity flow"** (um ativo por
+   recurso, fluxo antigo).
+
+Campos de status da tela × resposta do register:
+
+| Tela | Resposta |
+|---|---|
+| Organization Identity | `participantId` |
+| Registered in Catalog / Federated Asset ID | `assetId` |
+| Resources Effectively Published | `resources` |
+| Sidecar Registered | `sidecarRegistered` |
+| Contract Offer ID | `contractOfferId` |
+| Organization Secret | ok se o register volta 200; `403` = segredo errado |
 
 
 ---
@@ -342,6 +383,7 @@ histórico da outra parte); os tokens deles são revogados.
 - [ ] (se for recomeçar) Parte E: dryRun conferido, DELETE feito, `.data/` do Sidecar apagada
 - [ ] Parte A aplicada pelo Codex; `npm test` e `npm run build` passam; Sidecar reiniciado
 - [ ] `.env.local` com o segredo da organização; Sidecar reiniciado (Parte B)
+- [ ] tela de publicação ajustada (Parte C.1): federação criada no 1º CPS, URL do túnel, 5 recursos, segredo igual ao do Sidecar
 - [ ] 3 CPS registrados com `resources` e `sidecarRegistered: true` (Parte C)
 - [ ] ACSM registrada como consumidora
 - [ ] discover → offer → negotiate → leitura de um recurso → agreement (Parte D)
