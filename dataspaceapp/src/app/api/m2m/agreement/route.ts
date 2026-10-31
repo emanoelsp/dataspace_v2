@@ -4,19 +4,21 @@
  * Devolve o estado do acordo (assinaturas, validade, finalidade, recursos
  * liberados), a credencial de uso e os tokens emitidos — sem o valor dos
  * tokens. `effectiveStatus` resume se o contrato está utilizável agora.
+ * Só as partes do contrato consultam: X-Sidecar-Secret da organização do
+ * consumidor ou do provedor.
  *
  * Query: ?contractRef=<contractAgreements id>   (o `contractRef` do negotiate)
  */
 
 import { NextRequest, NextResponse } from "next/server"
-import { getDb, apiKeyError } from "@/lib/m2m"
+import { getDb, apiKeyError, participantSecretMatches, SidecarSecretUnavailableError } from "@/lib/m2m"
 
 export const runtime = "nodejs"
 
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-M2M-Key",
+  "Access-Control-Allow-Headers": "Content-Type, X-M2M-Key, X-Sidecar-Secret",
 }
 
 function iso(value: unknown): string | null {
@@ -38,6 +40,18 @@ export async function GET(request: NextRequest) {
   const agreementDoc = await db.collection("contractAgreements").doc(contractRef).get()
   if (!agreementDoc.exists) return NextResponse.json({ error: "Agreement not found" }, { status: 404, headers: CORS })
   const a = agreementDoc.data()!
+
+  const provided = (request.headers.get("x-sidecar-secret") ?? "").trim()
+  const parties = [a.consumerParticipantId ?? a.consumerId, a.providerParticipantId ?? a.providerId].map(p => String(p ?? ""))
+  try {
+    const allowed = (await Promise.all(parties.map(p => participantSecretMatches(db, p, provided)))).some(Boolean)
+    if (!allowed) {
+      return NextResponse.json({ error: "Only the contract parties can read it: send your organization sidecar secret in X-Sidecar-Secret." }, { status: 403, headers: CORS })
+    }
+  } catch (err) {
+    if (err instanceof SidecarSecretUnavailableError) return NextResponse.json({ error: err.message }, { status: 503, headers: CORS })
+    throw err
+  }
 
   const [credSnap, tokenSnap] = await Promise.all([
     db.collection("credentialGrants").where("agreementId", "==", contractRef).get(),

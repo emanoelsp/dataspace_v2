@@ -282,7 +282,8 @@ Lista extraída de `dataspaceapp/src/app/api/**/route.ts`.
 | GET | https://dataspace-v2.vercel.app/api/m2m/discover | descoberta por `?capability=&slug=&equipmentType=&q=` |
 | GET | https://dataspace-v2.vercel.app/api/m2m/offer | oferta de contrato e diretrizes de um ativo |
 | POST | https://dataspace-v2.vercel.app/api/m2m/negotiate | negocia o contrato (adesão, oferta, conexão, acordo, credencial), gera o token e envia ao Sidecar |
-| GET | https://dataspace-v2.vercel.app/api/m2m/agreement | validação de um contrato negociado |
+| GET | https://dataspace-v2.vercel.app/api/m2m/agreement | validação de um contrato negociado (só as partes) |
+| POST | https://dataspace-v2.vercel.app/api/m2m/organization | admin: define/reseta o segredo do Sidecar de uma organização |
 | POST | https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint | troca a URL do Sidecar de todos os CPS da organização e re-registra cada CPS |
 | GET | https://dataspace-v2.vercel.app/api/m2m/monitor | monitor M2M |
 
@@ -341,7 +342,7 @@ Nos exemplos: CPS em `http://127.0.0.1:3101` com 5 recursos, túnel do Sidecar e
 | Item | Onde | Para quê | Obrigatório |
 |---|---|---|---|
 | `M2M_API_KEY` | header `X-M2M-Key` nas chamadas de escrita | protege `register`, `negotiate`, `sidecar-endpoint` e `agreement` | sim (definida em produção; valor passado pelo Emanoel) |
-| Segredo do Sidecar da organização | `SIDECAR_ADMIN_SECRET` no `.env.local` do Sidecar **e** header `X-Sidecar-Secret` | a nuvem fala com o Sidecar da organização com esse segredo; só quem o conhece altera os CPS da organização | sim |
+| Segredo do Sidecar da organização | `SIDECAR_ADMIN_SECRET` no `.env.local` do Sidecar **e** header `X-Sidecar-Secret` | a nuvem fala com o Sidecar da organização com esse segredo; prova a identidade da organização em `register`, `sidecar-endpoint`, `negotiate` (consumidor) e `agreement` | sim |
 | `DATASPACE_WEBHOOK_URL` / `DATASPACE_WEBHOOK_SECRET` | `.env.local` do Sidecar | acessos aparecem no painel do Dataspace (o secret é o `SIDECAR_ADMIN_SECRET` **global** do Dataspace, passado pelo Emanoel) | não |
 
 **O segredo do Sidecar é por organização**, não global. Duas formas de criá-lo:
@@ -360,7 +361,23 @@ Nos exemplos: CPS em `http://127.0.0.1:3101` com 5 recursos, túnel do Sidecar e
   o Sidecar e repita o register com o header.
 
 A partir do primeiro register, **toda** chamada de `register` e
-`sidecar-endpoint` dessa organização exige `X-Sidecar-Secret`. Sem ele: `403`.
+`sidecar-endpoint` dessa organização exige `X-Sidecar-Secret`, e o `negotiate`
+exige o segredo da organização **do consumidor**. Sem ele: `403`.
+
+**Organização que já tinha CPS antes do segredo por organização** (ex.:
+IFSC-GASPAR, plant1) não pode ser assumida pelo register — senão qualquer um
+com a `X-M2M-Key` ficaria com ela. O administrador do Dataspace define o segredo
+uma vez:
+
+```bash
+curl -X POST https://dataspace-v2.vercel.app/api/m2m/organization \
+  -H "Content-Type: application/json" \
+  -H "X-M2M-Admin-Key: <M2M_ADMIN_KEY>" \
+  -d '{ "organization": "IFSC-GASPAR", "sidecarSecret": "<segredo escolhido pela organização>" }'
+```
+
+Sem `sidecarSecret`, a rota gera um e devolve uma vez. A mesma rota reseta o
+segredo de quem o perdeu.
 
 ```bash
 # .env.local do Sidecar
@@ -482,8 +499,10 @@ curl -X POST https://dataspace-v2.vercel.app/api/m2m/register \
 Se o Dataspace gerou o segredo (primeiro register sem header), a resposta traz
 também `sidecarSecret` e `sidecarSecretNotice`.
 
-O que acontece: cria/atualiza conector → federação → compliance → ativo (com os
-recursos) → governança → **oferta de contrato** com as diretrizes, e chama
+O que acontece: cria/atualiza conector → federação (+ adesão: `active` em
+federação self-service ou criada por você; `pending-approval` nas demais, ver
+`federation.membershipStatus`) → compliance → ativo (com os recursos) →
+governança → **oferta de contrato** com as diretrizes, e chama
 `POST {sidecarEndpoint}/api/equipment` com o segredo da organização e o mapa de
 recursos. Idempotente por `organization` + `equipmentSlug`.
 
@@ -495,6 +514,7 @@ recursos. Idempotente por `organization` + `equipmentSlug`.
 | `400 X-Sidecar-Secret must have at least 32 characters.` | segredo curto no primeiro register |
 | `401 Missing or invalid X-M2M-Key header.` | header ausente ou errado |
 | `403 Organization "…" is already registered…` | organização já tem segredo e o header faltou ou está errado |
+| `403 Organization "…" already has CPS registered without a sidecar secret…` | organização legada: o admin precisa definir o segredo (`/api/m2m/organization`) |
 | `404 Federation not found…` | `join`/`joinByName` não existe |
 | `503 Sidecar secret store unavailable` | configuração da nuvem — avise o Emanoel |
 
@@ -618,7 +638,10 @@ Mostra as diretrizes que o consumidor aceita ao negociar.
 |---|---|
 | **Método** | `POST` |
 | **URL** | `https://dataspace-v2.vercel.app/api/m2m/negotiate` |
-| **Headers** | `Content-Type: application/json`, `X-M2M-Key: <M2M_API_KEY>` |
+| **Headers** | `Content-Type: application/json`, `X-M2M-Key: <M2M_API_KEY>`, `X-Sidecar-Secret: <segredo da organização do CONSUMIDOR>` |
+
+O `consumerParticipantId` precisa ser de uma organização registrada, e o header
+prova que o chamador é dela — ninguém negocia em nome de outro participante.
 
 **Body:**
 
@@ -636,6 +659,7 @@ Mostra as diretrizes que o consumidor aceita ao negociar.
 curl -X POST https://dataspace-v2.vercel.app/api/m2m/negotiate \
   -H "Content-Type: application/json" \
   -H "X-M2M-Key: <M2M_API_KEY>" \
+  -H "X-Sidecar-Secret: <segredo da organização do consumidor>" \
   -d '{
     "consumerParticipantId": "urn:dataspace:participant:ifsc-gaspar:acsm",
     "consumerName": "acsm",
@@ -649,7 +673,7 @@ curl -X POST https://dataspace-v2.vercel.app/api/m2m/negotiate \
 
 | # | Etapa | Coleção | Observação |
 |---|---|---|---|
-| 1 | adesão à federação | `federationMemberships` | automática em federação `self-service` ou se o consumidor já entrou nela pelo register |
+| 1 | adesão à federação | `federationMemberships` | reaproveita adesão `active`; cria automaticamente só em federação `self-service` |
 | 2 | oferta de contrato | `contractOffers` | a publicada no register |
 | 3 | conexão entre conectores | `connectorConnections` | reaproveitada nas próximas negociações |
 | 4 | acordo assinado | `contractAgreements` | `signedByConsumerAt` + `signedByProviderAt`, `validFrom`/`validUntil`, recursos |
@@ -695,7 +719,9 @@ curl -X POST https://dataspace-v2.vercel.app/api/m2m/negotiate \
 | `202 { status: "pending", requestId }` | governança com `requiresManualApproval: true` (ver aviso) |
 | `400 Required: consumerParticipantId and (targetAssetId or targetSlug)` | body incompleto |
 | `400 resources must be an array of resource ids` | `resources` mal formado |
+| `403 Consumer not authenticated…` | `X-Sidecar-Secret` ausente/errado ou organização do consumidor não registrada |
 | `403 The asset federation does not admit new members automatically.` | federação com aprovação/convite e consumidor não é membro |
+| `403 Federation membership is pending-approval…` | adesão aguardando o dono da federação |
 | `403 Connector connection revoked/rejected by the provider.` | o provedor bloqueou esse consumidor |
 | `404 Target asset not found` | `assetId`/slug inexistente |
 | `409 Target asset has no equipmentSlug/sidecarEndpoint` | ativo sem Sidecar |
@@ -750,9 +776,10 @@ curl https://xxxx.trycloudflare.com/api/proxy/cpslai1/hcm-episodes \
 |---|---|
 | **Método** | `GET` |
 | **URL** | `https://dataspace-v2.vercel.app/api/m2m/agreement?contractRef=<contractRef>` |
-| **Headers** | `X-M2M-Key: <M2M_API_KEY>` |
+| **Headers** | `X-M2M-Key: <M2M_API_KEY>`, `X-Sidecar-Secret: <segredo da organização do consumidor ou do provedor>` |
 
-Confere o que foi contratado e se ainda vale. Nunca devolve o valor do token.
+Confere o que foi contratado e se ainda vale. Só as partes do contrato consultam
+(`403` para os demais). Nunca devolve o valor do token.
 
 **Resposta (200):**
 
@@ -851,9 +878,10 @@ continuam válidos; só as URLs mudam.
 | 1 | Registrar CPS (provedor e consumidor) | POST | `https://dataspace-v2.vercel.app/api/m2m/register` | `X-M2M-Key`, `X-Sidecar-Secret` |
 | 2 | Descobrir | GET | `https://dataspace-v2.vercel.app/api/m2m/discover?…` | — |
 | 3 | Ver oferta e diretrizes | GET | `https://dataspace-v2.vercel.app/api/m2m/offer?assetId=…` | — |
-| 4 | Assinar contrato / obter token | POST | `https://dataspace-v2.vercel.app/api/m2m/negotiate` | `X-M2M-Key` |
+| 4 | Assinar contrato / obter token | POST | `https://dataspace-v2.vercel.app/api/m2m/negotiate` | `X-M2M-Key`, `X-Sidecar-Secret` (consumidor) |
 | 5 | Consumir dados | GET | `{sidecarEndpoint}/api/proxy/{slug}/{resourceId}` | `Bearer <token>` |
-| 6 | Validar contrato | GET | `https://dataspace-v2.vercel.app/api/m2m/agreement?contractRef=…` | `X-M2M-Key` |
+| 6 | Validar contrato | GET | `https://dataspace-v2.vercel.app/api/m2m/agreement?contractRef=…` | `X-M2M-Key`, `X-Sidecar-Secret` (uma das partes) |
+| — | Segredo de organização legada / perdido | POST | `https://dataspace-v2.vercel.app/api/m2m/organization` | `X-M2M-Admin-Key` (admin) |
 | — | URL do túnel mudou | POST | `https://dataspace-v2.vercel.app/api/m2m/sidecar-endpoint` | `X-M2M-Key`, `X-Sidecar-Secret` |
 
 ---
@@ -875,8 +903,11 @@ continuam válidos; só as URLs mudam.
   rotas M2M dessas organizações respondem 503; a recuperação é apagar o documento
   da organização em `m2mOrganizations` e refazer o register. O fluxo humano
   (`push-token`, `register-equipment`) continua com o segredo global.
-- O primeiro register de uma organização define o segredo dela (confiança no
-  primeiro uso): quem chegar primeiro com o nome da organização fica com ela.
+- O primeiro register de uma organização **nova** define o segredo dela
+  (confiança no primeiro uso). Organizações que já tinham CPS só recebem segredo
+  pelo administrador (`/api/m2m/organization`, `M2M_ADMIN_KEY`).
+- A identidade M2M é por organização: quem tem o segredo da organização age por
+  qualquer `participantId` dela.
 - O trecho LAN Sidecar → CPS usa o token fixo `demo`, que os CPS aceitam mesmo
   com `EQUIPMENT_TOKEN` definido; a soberania depende de o CPS não ser acessível
   fora da LAN.

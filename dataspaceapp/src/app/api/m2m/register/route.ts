@@ -32,7 +32,9 @@
  * organização, o valor enviado vira o segredo do Sidecar dela (≥ 32 chars); sem
  * o header, o Dataspace gera um e devolve UMA vez em `sidecarSecret`. A partir
  * daí todo register dessa organização exige o mesmo header — ninguém mais
- * consegue redirecionar os CPS dela nem receber o segredo.
+ * consegue redirecionar os CPS dela nem receber o segredo. Organização que já
+ * tinha CPS antes do segredo por organização não pode ser assumida pelo
+ * register: o administrador define o segredo em POST /api/m2m/organization.
  */
 
 import { NextResponse } from "next/server"
@@ -43,6 +45,7 @@ import {
   M2M_CORS, M2M_ORGS, apiKeyError, parseResources, resourceUrls,
   generateSidecarSecret, isAcceptableSidecarSecret, encryptSidecarSecret,
   decryptSidecarSecret, secretsMatch, governanceSnapshotForAsset, upsertContractOffer,
+  m2mConnectorsOfOrg, upsertMembership,
 } from "@/lib/m2m"
 
 export const runtime = "nodejs"
@@ -105,6 +108,11 @@ export async function POST(request: Request) {
     }
     sidecarSecret = stored
   } else {
+    if ((await m2mConnectorsOfOrg(db, organization)).length > 0) {
+      return NextResponse.json({
+        error: `Organization "${organization}" already has CPS registered without a sidecar secret. Ask the Dataspace admin to set it (POST /api/m2m/organization), then send it in X-Sidecar-Secret.`,
+      }, { status: 403, headers: M2M_CORS })
+    }
     if (providedSecret && !isAcceptableSidecarSecret(providedSecret)) {
       return NextResponse.json({ error: "X-Sidecar-Secret must have at least 32 characters." }, { status: 400, headers: M2M_CORS })
     }
@@ -154,6 +162,7 @@ export async function POST(request: Request) {
   let federationName = ""
   let federationCreated = false
   let admissionMode = "self-service"
+  let federationOwnerId = ""
   const fedReq = body.federation ?? {}
 
   if (fedReq.join) {
@@ -162,12 +171,14 @@ export async function POST(request: Request) {
     federationId = fedDoc.id
     federationName = (fedDoc.data()!.name as string) ?? ""
     admissionMode = (fedDoc.data()!.admissionMode as string) ?? "self-service"
+    federationOwnerId = (fedDoc.data()!.ownerId as string) ?? ""
   } else if (fedReq.joinByName) {
     const q = await db.collection("federations").where("name", "==", fedReq.joinByName).limit(1).get()
     if (q.empty) return NextResponse.json({ error: `Federation not found by name: ${fedReq.joinByName}` }, { status: 404, headers: M2M_CORS })
     federationId = q.docs[0].id
     federationName = (q.docs[0].data().name as string) ?? ""
     admissionMode = (q.docs[0].data().admissionMode as string) ?? "self-service"
+    federationOwnerId = (q.docs[0].data().ownerId as string) ?? ""
   } else {
     const fedType: FederationType = fedReq.create?.type ?? "Open"
     federationName = fedReq.create?.name || `${organization} — ${slug} federation`
@@ -177,6 +188,8 @@ export async function POST(request: Request) {
     admissionMode = model.admissionMode
     if (!existing.empty) {
       federationId = existing.docs[0].id
+      admissionMode = (existing.docs[0].data().admissionMode as string) ?? admissionMode
+      federationOwnerId = (existing.docs[0].data().ownerId as string) ?? ""
     } else {
       const ref = await db.collection("federations").add({
         name: federationName,
@@ -194,8 +207,16 @@ export async function POST(request: Request) {
       })
       federationId = ref.id
       federationCreated = true
+      federationOwnerId = participantId
     }
   }
+
+  // ── adesão à federação: ativa se self-service ou dono; senão aguarda aprovação ──
+  const membership = await upsertMembership(db, {
+    federationId, federationName, participantId, participantName: body.name,
+    admissionMode, ownerId: federationOwnerId,
+    status: federationOwnerId === participantId || admissionMode === "self-service" ? "active" : "pending-approval",
+  }, FieldValue.serverTimestamp())
 
   // ── 3) compliance (só se criou a federação) ──
   let complianceId = ""
@@ -279,7 +300,7 @@ export async function POST(request: Request) {
     ok: true,
     participantId,
     connectorId,
-    federation: { id: federationId, name: federationName, created: federationCreated, admissionMode },
+    federation: { id: federationId, name: federationName, created: federationCreated, admissionMode, membershipStatus: membership.status },
     complianceId: complianceId || null,
     assetId,
     equipmentSlug: slug,

@@ -14,8 +14,9 @@ vi.mock("firebase-admin/firestore", async () => {
 })
 
 const SIDECAR = "https://lab-sidecar.trycloudflare.com"
-const CONSUMER = "urn:dataspace:participant:ifsc-gaspar:acsm"
+const CONSUMER = "urn:dataspace:participant:acsm-lab:acsm"
 const OWN_SECRET = "scs_marcos_chosen_secret_0123456789abcdef"
+const CONSUMER_SECRET = "scs_acsm_lab_consumer_secret_0123456789ab"
 const RESOURCES = [
   { id: "operational", name: "Operational Data", path: "/api/v1/operational" },
   { id: "cognitive", name: "Cognitive Knowledge", path: "/api/v1/cognitive" },
@@ -48,9 +49,9 @@ async function register(overrides: Record<string, unknown> = {}, headers: Record
   return { res, json: await res.json() }
 }
 
-async function negotiate(body: Record<string, unknown>) {
+async function negotiate(body: Record<string, unknown>, headers: Record<string, string> = { "X-Sidecar-Secret": CONSUMER_SECRET }) {
   const { POST } = await import("./negotiate/route")
-  const res = await POST(post({ consumerParticipantId: CONSUMER, consumerName: "acsm", ...body }))
+  const res = await POST(post({ consumerParticipantId: CONSUMER, consumerName: "acsm", ...body }, headers))
   return { res, json: await res.json() }
 }
 
@@ -69,7 +70,13 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  delete process.env.M2M_ADMIN_KEY
 })
+
+async function getAgreement(contractRef: string, headers: Record<string, string>) {
+  const { GET } = await import("./agreement/route")
+  return GET(new NextRequest(`http://test/api/m2m/agreement?contractRef=${contractRef}`, { headers }))
+}
 
 describe("register — sidecar secret per organization", () => {
   it("issues a secret once on the first register and uses it with the sidecar", async () => {
@@ -107,6 +114,34 @@ describe("register — sidecar secret per organization", () => {
     expect(again.res.status).toBe(200)
     expect(again.json.sidecarSecret).toBeUndefined()
     expect(store.docs("assets").size).toBe(before)
+  })
+
+  it("does not let anyone claim an organization that already had CPS before per-organization secrets", async () => {
+    await store.collection("connectorProfiles").doc("legacy").set({
+      source: "m2m", participantId: "urn:dataspace:participant:ifsc-gaspar:old-resource",
+    })
+    const { res } = await register({}, { "X-Sidecar-Secret": OWN_SECRET })
+    expect(res.status).toBe(403)
+    expect(store.docs("m2mOrganizations").size).toBe(0)
+    expect(sidecarCalls).toHaveLength(0)
+  })
+
+  it("lets the admin set the secret of a legacy organization, which then registers with it", async () => {
+    await store.collection("connectorProfiles").doc("legacy").set({
+      source: "m2m", participantId: "urn:dataspace:participant:ifsc-gaspar:old-resource",
+    })
+    const { POST } = await import("./organization/route")
+    const body = { organization: "IFSC-GASPAR", sidecarSecret: OWN_SECRET }
+
+    expect((await POST(post(body))).status).toBe(503) // M2M_ADMIN_KEY ausente: bloqueado
+    process.env.M2M_ADMIN_KEY = "admin_key_for_tests_0123456789"
+    expect((await POST(post(body, { "X-M2M-Admin-Key": "wrong" }))).status).toBe(401)
+    const ok = await POST(post(body, { "X-M2M-Admin-Key": "admin_key_for_tests_0123456789" }))
+    expect(ok.status).toBe(200)
+    expect((await ok.json()).sidecarSecret).toBeUndefined()
+
+    const { res } = await register({}, { "X-Sidecar-Secret": OWN_SECRET })
+    expect(res.status).toBe(200)
   })
 
   it("fails closed when SIDECAR_SECRETS_KEY is not configured", async () => {
@@ -150,7 +185,21 @@ describe("offer → negotiate → agreement", () => {
 
   beforeEach(async () => {
     assetId = (await register({}, { "X-Sidecar-Secret": OWN_SECRET })).json.assetId
+    // consumidor de outra organização, com federação própria
+    await register({
+      name: "ACSM", organization: "acsm-lab", equipmentSlug: "acsm",
+      federation: { create: { name: "acsm-fed", type: "Open" } }, resources: [],
+    }, { "X-Sidecar-Secret": CONSUMER_SECRET })
     sidecarCalls = []
+  })
+
+  it("requires the consumer to prove its organization", async () => {
+    expect((await negotiate({ targetAssetId: assetId }, {})).res.status).toBe(403)
+    expect((await negotiate({ targetAssetId: assetId }, { "X-Sidecar-Secret": OWN_SECRET })).res.status).toBe(403)
+    const spoofed = await negotiate({ targetAssetId: assetId, consumerParticipantId: "urn:dataspace:participant:ghost-org:x" })
+    expect(spoofed.res.status).toBe(403)
+    expect(store.docs("contractAgreements").size).toBe(0)
+    expect(sidecarCalls).toHaveLength(0)
   })
 
   it("shows the directives and resources before signing", async () => {
@@ -221,8 +270,21 @@ describe("offer → negotiate → agreement", () => {
     expect(sidecarCalls).toHaveLength(0)
   })
 
+  it("keeps a member whose join is pending approval out of the contract", async () => {
+    const fedId = String(store.docs("assets").get(assetId)?.federationId)
+    await store.collection("federations").doc(fedId).set({ admissionMode: "approval" }, { merge: true })
+    const joined = await register({
+      name: "ACSM", organization: "acsm-lab", equipmentSlug: "acsm", federation: { join: fedId }, resources: [],
+    }, { "X-Sidecar-Secret": CONSUMER_SECRET })
+    expect(joined.json.federation.membershipStatus).toBe("pending-approval")
+
+    const { res, json } = await negotiate({ targetAssetId: assetId })
+    expect(res.status).toBe(403)
+    expect(json.error).toMatch(/pending-approval/)
+  })
+
   it("never pushes the global secret for an M2M asset whose organization has no secret", async () => {
-    store.docs("m2mOrganizations").clear()
+    store.docs("m2mOrganizations").delete("ifsc-gaspar")
     const { res } = await negotiate({ targetAssetId: assetId })
     expect(res.status).toBe(409)
     expect(sidecarCalls).toHaveLength(0)
@@ -230,8 +292,7 @@ describe("offer → negotiate → agreement", () => {
 
   it("validates the negotiated contract without exposing the token", async () => {
     const granted = (await negotiate({ targetAssetId: assetId, resources: ["cognitive"] })).json
-    const { GET } = await import("./agreement/route")
-    const res = await GET(new NextRequest(`http://test/api/m2m/agreement?contractRef=${granted.contractRef}`))
+    const res = await getAgreement(granted.contractRef, { "X-Sidecar-Secret": CONSUMER_SECRET })
     const json = await res.json()
 
     expect(json.effectiveStatus).toBe("active")
@@ -240,5 +301,17 @@ describe("offer → negotiate → agreement", () => {
     expect(json.credential.status).toBe("active")
     expect(json.tokens[0]).toMatchObject({ status: "active", deliveredToSidecar: true })
     expect(JSON.stringify(json)).not.toContain(granted.token)
+  })
+
+  it("lets only the contract parties read the agreement", async () => {
+    const granted = (await negotiate({ targetAssetId: assetId })).json
+    expect((await getAgreement(granted.contractRef, { "X-Sidecar-Secret": OWN_SECRET })).status).toBe(200)
+    expect((await getAgreement(granted.contractRef, {})).status).toBe(403)
+
+    await register({
+      name: "Outsider", organization: "outsider", equipmentSlug: "outsider",
+      federation: { create: { name: "outsider-fed", type: "Open" } }, resources: [],
+    }, { "X-Sidecar-Secret": "scs_outsider_secret_0123456789abcdefgh" })
+    expect((await getAgreement(granted.contractRef, { "X-Sidecar-Secret": "scs_outsider_secret_0123456789abcdefgh" })).status).toBe(403)
   })
 })

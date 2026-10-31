@@ -39,6 +39,7 @@
 - [x] `src/lib/equipment-aas.ts` — utilitários AAS/ECLASS compartilhados
 - [x] `POST /api/m2m/sidecar-endpoint` — troca a URL do Sidecar (túnel efêmero) de todos os CPS M2M de uma organização e re-registra cada CPS no novo Sidecar
 - [x] M2M: segredo do Sidecar por organização (cifrado com `SIDECAR_SECRETS_KEY`, `X-Sidecar-Secret`), sem envio do segredo global a URLs de terceiros
+- [x] M2M: consumidor autenticado pelo segredo da organização no negotiate; agreement só para as partes; organização legada só via admin (`POST /api/m2m/organization`, `M2M_ADMIN_KEY`); adesão pendente em federação com aprovação
 - [x] M2M: `resources` por CPS (register → Sidecar → discover → negotiate com permissão por recurso)
 - [x] M2M: negociação completa (adesão, oferta, conexão, acordo com duas assinaturas, credencial) + `GET /api/m2m/offer` e `GET /api/m2m/agreement`
 

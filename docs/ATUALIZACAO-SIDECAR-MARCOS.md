@@ -128,22 +128,24 @@ escolhe o valor:
 openssl rand -hex 32
 ```
 
-1. Coloque no `.env.local` do Sidecar:
+1. **Mande o valor ao Emanoel por canal privado.** A IFSC-GASPAR já tem CPS
+   cadastrados, então o register não deixa ninguém "assumir" a organização: o
+   Emanoel cadastra o teu segredo como administrador
+   (`POST /api/m2m/organization`). Espere a confirmação dele.
+2. Coloque no `.env.local` do Sidecar:
 
    ```bash
    SIDECAR_ADMIN_SECRET=<o valor gerado>
    ```
 
-2. Reinicie o Sidecar (o Next.js só lê o `.env.local` na subida).
-3. Envie **o mesmo valor** no header `X-Sidecar-Secret` em todo `register` e
-   `sidecar-endpoint`.
+3. Reinicie o Sidecar (o Next.js só lê o `.env.local` na subida).
+4. Envie **o mesmo valor** no header `X-Sidecar-Secret` em todo `register`,
+   `sidecar-endpoint`, `negotiate` e `agreement`.
 
-No primeiro register da organização `IFSC-GASPAR` (Parte C), esse valor vira o
-segredo dela. Depois disso, qualquer register ou troca de URL sem o header certo
-recebe `403` — ninguém mais consegue redirecionar os teus CPS.
+Sem o header certo, essas chamadas recebem `403` — ninguém mais consegue
+redirecionar os teus CPS nem negociar em nome da IFSC-GASPAR.
 
-> Guarde o valor. Se perder, peça ao Emanoel para resetar a organização no
-> Dataspace.
+> Guarde o valor. Se perder, o Emanoel reseta pela mesma rota de administrador.
 
 ---
 
@@ -191,7 +193,8 @@ curl https://<tunel>.trycloudflare.com/api/equipment   # cada CPS com "resources
 ```
 
 Registre também a **ACSM como consumidora**, para ter um `participantId`
-(ex.: `"equipmentSlug": "acsm"`, sem `resources` se ela não expõe dados).
+(ex.: `"equipmentSlug": "acsm"`, sem `resources` se ela não expõe dados). Na
+mesma organização, ela usa o mesmo segredo.
 
 > Os ativos antigos (um por recurso) continuam no catálogo; podem ser ignorados.
 > O Emanoel remove depois.
@@ -224,6 +227,7 @@ condições e recursos. É isso que a tela da ACSM deve mostrar antes de assinar
 curl -X POST https://dataspace-v2.vercel.app/api/m2m/negotiate \
   -H "Content-Type: application/json" \
   -H "X-M2M-Key: <M2M_API_KEY>" \
+  -H "X-Sidecar-Secret: <segredo da Parte B>" \
   -d '{
     "consumerParticipantId": "urn:dataspace:participant:ifsc-gaspar:acsm",
     "consumerName": "acsm",
@@ -251,7 +255,8 @@ Recurso não contratado → `403 Insufficient permission`. Token expirado →
 
 ```bash
 curl "https://dataspace-v2.vercel.app/api/m2m/agreement?contractRef=<contractRef>" \
-  -H "X-M2M-Key: <M2M_API_KEY>"
+  -H "X-M2M-Key: <M2M_API_KEY>" \
+  -H "X-Sidecar-Secret: <segredo da Parte B>"
 ```
 
 `effectiveStatus` = `active` | `agreement-valid-no-active-token` | `expired`,
@@ -274,6 +279,7 @@ Atualiza os 3 CPS de uma vez; tokens já emitidos continuam válidos.
 ## Checklist
 
 - [ ] Parte A aplicada pelo Codex; `npm test` e `npm run build` passam; Sidecar reiniciado
+- [ ] segredo enviado ao Emanoel e cadastrado por ele (Parte B)
 - [ ] `.env.local` com o segredo da organização; Sidecar reiniciado (Parte B)
 - [ ] 3 CPS registrados com `resources` e `sidecarRegistered: true` (Parte C)
 - [ ] ACSM registrada como consumidora

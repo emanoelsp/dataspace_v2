@@ -22,7 +22,7 @@ export const M2M_OWNER_PREFIX = "urn:dataspace:participant:"
 export const M2M_CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-M2M-Key, X-Sidecar-Secret",
+  "Access-Control-Allow-Headers": "Content-Type, X-M2M-Key, X-Sidecar-Secret, X-M2M-Admin-Key",
 }
 
 /**
@@ -368,4 +368,57 @@ export async function upsertContractOffer(
   }
   const ref = await db.collection("contractOffers").add({ ...fields, createdAt: timestamp })
   return ref.id
+}
+
+// ── Autenticação de participante e administração ─────────────────────────
+
+/** O segredo enviado prova que o chamador é da organização do participante. */
+export async function participantSecretMatches(db: Firestore, participantId: string, provided: string): Promise<boolean> {
+  if (!provided) return false
+  const secret = await sidecarSecretForParticipant(db, participantId)
+  return Boolean(secret && secretsMatch(provided, secret))
+}
+
+/** Conectores M2M de uma organização (participantId urn:dataspace:participant:{org}:*). */
+export async function m2mConnectorsOfOrg(db: Firestore, organization: string, onlySlug = "") {
+  const prefix = `${M2M_OWNER_PREFIX}${slugify(organization)}:`
+  const only = onlySlug ? participantIdFor(organization, slugify(onlySlug)) : ""
+  const snap = await db.collection("connectorProfiles").where("source", "==", "m2m").get()
+  return snap.docs.filter(d => {
+    const pid = String(d.data()?.participantId ?? "")
+    return only ? pid === only : pid.startsWith(prefix)
+  })
+}
+
+/**
+ * Operações de administrador (definir/resetar o segredo de uma organização).
+ * Exige M2M_ADMIN_KEY no ambiente e o header X-M2M-Admin-Key igual; sem a
+ * variável, a operação fica bloqueada. Retorna [mensagem, status] ou null.
+ */
+export function adminKeyError(request: Request): [string, number] | null {
+  const required = process.env.M2M_ADMIN_KEY
+  if (!required) return ["Admin operations are disabled (M2M_ADMIN_KEY not configured).", 503]
+  const provided = request.headers.get("x-m2m-admin-key") ?? ""
+  return provided && secretsMatch(provided, required) ? null : ["Missing or invalid X-M2M-Admin-Key header.", 401]
+}
+
+/** Grava a adesão do participante à federação (ativa ou pendente). */
+export async function upsertMembership(
+  db: Firestore,
+  m: { federationId: string; federationName: string; participantId: string; participantName: string; admissionMode: string; ownerId: string; status: "active" | "pending-approval" },
+  timestamp: unknown,
+): Promise<{ id: string; status: string; created: boolean }> {
+  const existing = await db.collection("federationMemberships")
+    .where("federationId", "==", m.federationId).where("participantId", "==", m.participantId).limit(1).get()
+  if (!existing.empty) {
+    return { id: existing.docs[0].id, status: String(existing.docs[0].data()?.status ?? ""), created: false }
+  }
+  const ref = await db.collection("federationMemberships").add({
+    federationId: m.federationId, federationName: m.federationName,
+    participantId: m.participantId, requesterId: m.participantId, requesterName: m.participantName,
+    membershipType: m.admissionMode, status: m.status,
+    requestedAt: timestamp, ...(m.status === "active" ? { approvedAt: timestamp } : {}),
+    ownerId: m.ownerId, source: "m2m", createdAt: timestamp, updatedAt: timestamp,
+  })
+  return { id: ref.id, status: m.status, created: true }
 }

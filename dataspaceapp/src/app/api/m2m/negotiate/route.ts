@@ -11,6 +11,10 @@
  * e devolve {token, dataUrl, resourceUrls, expiresAt, steps}.
  * Se a governança exige aprovação manual, devolve {status:"pending", requestId}.
  *
+ * O consumidor prova a identidade com o segredo do Sidecar da organização dele
+ * (header X-Sidecar-Secret): só quem é da organização negocia em nome de um
+ * participantId dela.
+ *
  * Body:
  * {
  *   "consumerParticipantId": "urn:dataspace:participant:plant1:cnc",
@@ -26,7 +30,7 @@ import { FieldValue, type Firestore } from "firebase-admin/firestore"
 import {
   getDb, tokenValue, governanceSnapshotForAsset, sidecarPushToken, apiKeyError,
   upsertContractOffer, resourceUrls, sidecarSecretForParticipant, SidecarSecretUnavailableError,
-  SIDECAR_ADMIN_SECRET, type M2MResource,
+  participantSecretMatches, upsertMembership, SIDECAR_ADMIN_SECRET, type M2MResource,
 } from "@/lib/m2m"
 
 export const runtime = "nodejs"
@@ -34,7 +38,7 @@ export const runtime = "nodejs"
 const CORS = {
   "Access-Control-Allow-Origin": "*",
   "Access-Control-Allow-Methods": "POST, OPTIONS",
-  "Access-Control-Allow-Headers": "Content-Type, X-M2M-Key",
+  "Access-Control-Allow-Headers": "Content-Type, X-M2M-Key, X-Sidecar-Secret",
 }
 
 type Body = {
@@ -48,41 +52,40 @@ type Body = {
 
 type Step = { step: string; id: string; status: "created" | "reused" | "skipped" }
 
-/** Admissão do consumidor na federação do ativo (reusa ou cria a adesão). */
+/** Admissão do consumidor na federação do ativo: só por adesão ativa ou federação self-service. */
 async function ensureMembership(
-  db: Firestore, federationId: string, consumer: string, consumerName: string, purpose: string, steps: Step[],
+  db: Firestore, federationId: string, consumer: string, consumerName: string, steps: Step[],
 ): Promise<{ error: string; admissionMode: string } | { membershipId: string }> {
   if (!federationId) {
     steps.push({ step: "federation-membership", id: "", status: "skipped" })
     return { membershipId: "" }
   }
+  const fed = (await db.collection("federations").doc(federationId).get()).data() ?? {}
+  const admissionMode = String(fed.admissionMode ?? "self-service")
   const existing = await db.collection("federationMemberships")
     .where("federationId", "==", federationId).where("participantId", "==", consumer).limit(1).get()
-  if (!existing.empty && existing.docs[0].data()?.status === "active") {
-    steps.push({ step: "federation-membership", id: existing.docs[0].id, status: "reused" })
-    return { membershipId: existing.docs[0].id }
+  const current = existing.empty ? null : existing.docs[0]
+
+  if (current?.data()?.status === "active") {
+    steps.push({ step: "federation-membership", id: current.id, status: "reused" })
+    return { membershipId: current.id }
+  }
+  if (current || admissionMode !== "self-service") {
+    return {
+      error: current
+        ? `Federation membership is ${current.data()?.status}; it must be approved by the federation owner.`
+        : "The asset federation does not admit new members automatically.",
+      admissionMode,
+    }
   }
 
-  const fedDoc = await db.collection("federations").doc(federationId).get()
-  const fed = fedDoc.data() ?? {}
-  const admissionMode = String(fed.admissionMode ?? "self-service")
-  // quem entrou na federação pelo register (join) já é membro, mesmo sem documento de adesão
-  const joinedByRegister = !(await db.collection("assets")
-    .where("ownerId", "==", consumer).where("federationId", "==", federationId).limit(1).get()).empty
-  if (admissionMode !== "self-service" && !joinedByRegister) {
-    return { error: "The asset federation does not admit new members automatically.", admissionMode }
-  }
-
-  const ref = await db.collection("federationMemberships").add({
+  const m = await upsertMembership(db, {
     federationId, federationName: String(fed.name ?? ""),
-    participantId: consumer, requesterId: consumer, requesterName: consumerName,
-    membershipType: admissionMode, status: "active", purpose,
-    requestedAt: FieldValue.serverTimestamp(), approvedAt: FieldValue.serverTimestamp(),
-    ownerId: String(fed.ownerId ?? ""), source: "m2m",
-    createdAt: FieldValue.serverTimestamp(), updatedAt: FieldValue.serverTimestamp(),
-  })
-  steps.push({ step: "federation-membership", id: ref.id, status: "created" })
-  return { membershipId: ref.id }
+    participantId: consumer, participantName: consumerName,
+    admissionMode, ownerId: String(fed.ownerId ?? ""), status: "active",
+  }, FieldValue.serverTimestamp())
+  steps.push({ step: "federation-membership", id: m.id, status: "created" })
+  return { membershipId: m.id }
 }
 
 export async function POST(request: Request) {
@@ -101,6 +104,19 @@ export async function POST(request: Request) {
 
   const db = getDb()
   if (!db) return NextResponse.json({ error: "Server credentials not configured" }, { status: 503, headers: CORS })
+
+  // ── identidade do consumidor ──
+  try {
+    const provided = (request.headers.get("x-sidecar-secret") ?? "").trim()
+    if (!(await participantSecretMatches(db, body.consumerParticipantId, provided))) {
+      return NextResponse.json({
+        error: "Consumer not authenticated: send the sidecar secret of the consumer organization in X-Sidecar-Secret (the consumer must be registered via /api/m2m/register).",
+      }, { status: 403, headers: CORS })
+    }
+  } catch (err) {
+    if (err instanceof SidecarSecretUnavailableError) return NextResponse.json({ error: err.message }, { status: 503, headers: CORS })
+    throw err
+  }
 
   // ── carrega o ativo alvo ──
   let assetDoc
@@ -183,7 +199,7 @@ export async function POST(request: Request) {
   const steps: Step[] = []
 
   // ── 1) adesão à federação ──
-  const membership = await ensureMembership(db, federationId, consumer, consumerName, purpose, steps)
+  const membership = await ensureMembership(db, federationId, consumer, consumerName, steps)
   if ("error" in membership) {
     return NextResponse.json({ error: membership.error, admissionMode: membership.admissionMode }, { status: 403, headers: CORS })
   }

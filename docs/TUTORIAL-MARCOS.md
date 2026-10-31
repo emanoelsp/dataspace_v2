@@ -1,5 +1,10 @@
 # Tutorial — Integrando a arquitetura de controle ao Dataspace (M2M)
 
+> **Desatualizado em partes (31/10/2026):** escrito para a versão de julho
+> (segredo global do Sidecar, sem recursos por CPS, negociação simplificada).
+> Para configurar e usar hoje, siga `docs/ATUALIZACAO-SIDECAR-MARCOS.md`; a
+> referência das APIs está em `docs/CONTRATO-REST-SIDECAR.md`, seção 6.
+
 Este guia é para o **Marcos** testar a integração da arquitetura de controle
 (CPS plug-and-play) com o **Dataspace** do Emanoel.
 

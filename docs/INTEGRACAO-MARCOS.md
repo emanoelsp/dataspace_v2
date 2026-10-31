@@ -1,5 +1,10 @@
 # Contrato de integração — ACSM (Marcos) × Dataspace Intra (Emanoel)
 
+> **Desatualizado em partes (31/10/2026):** escrito para a versão de julho
+> (segredo global do Sidecar, sem recursos por CPS, negociação simplificada).
+> Para configurar e usar hoje, siga `docs/ATUALIZACAO-SIDECAR-MARCOS.md`; a
+> referência das APIs está em `docs/CONTRATO-REST-SIDECAR.md`, seção 6.
+
 > Interface objetiva para a "integração efetiva com a parte do Marcos"
 > (item obrigatório definido pelo orientador em 17/04).
 

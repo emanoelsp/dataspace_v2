@@ -25,7 +25,7 @@ const INTERFACES = [
   {
     name: "self-register",
     method: "POST", path: "/api/m2m/register",
-    description: "CPS se auto-registra: conector + federação (cria/entra) + compliance + asset (com capacidades colhidas e recursos) + governança + oferta de contrato + registro no Sidecar. Idempotente por organization+slug. Header X-Sidecar-Secret: no primeiro register da organização define o segredo do Sidecar (ou o Dataspace gera e devolve uma vez em sidecarSecret); depois é obrigatório.",
+    description: "CPS se auto-registra: conector + federação (cria/entra) + compliance + asset (com capacidades colhidas e recursos) + governança + oferta de contrato + registro no Sidecar. Idempotente por organization+slug. Header X-Sidecar-Secret: no primeiro register de uma organização nova define o segredo do Sidecar (ou o Dataspace gera e devolve uma vez em sidecarSecret); depois é obrigatório. Organização com CPS anteriores ao segredo: o admin define em /api/m2m/organization.",
     headers: { "X-M2M-Key": "<M2M_API_KEY>", "X-Sidecar-Secret": "<segredo do Sidecar da organização>" },
     body: {
       name: "Heat Treatment Furnace", baseUrl: "http://IP:3004", sidecarEndpoint: "http://IP:3100",
@@ -67,13 +67,15 @@ const INTERFACES = [
     name: "negotiate",
     method: "POST", path: "/api/m2m/negotiate",
     description: "Negocia contrato e obtém token, gravando as mesmas etapas do fluxo humano: adesão à federação, oferta, conexão, acordo assinado pelas duas partes, credencial e token (empurrado ao Sidecar do provedor). Se a governança exigir aprovação manual, retorna pending.",
+    headers: { "X-M2M-Key": "<M2M_API_KEY>", "X-Sidecar-Secret": "<segredo do Sidecar da organização do CONSUMIDOR>" },
     body: { consumerParticipantId: "urn:...", consumerName: "cnc", targetAssetId: "<id> | targetSlug: oven", purpose: "compensação térmica", resources: ["operational"] },
     returns: { status: "granted|pending", token: "dsp_m2m_...", dataUrl: "http://IP:3100/api/proxy/oven/data", resourceUrls: {}, expiresAt: "ISO", contractRef: "...", steps: [] },
   },
   {
     name: "validate agreement",
     method: "GET", path: "/api/m2m/agreement",
-    description: "Validação de um contrato negociado: assinaturas, validade, recursos liberados, credencial e tokens (sem o valor).",
+    description: "Validação de um contrato negociado: assinaturas, validade, recursos liberados, credencial e tokens (sem o valor). Só as partes: X-Sidecar-Secret da organização do consumidor ou do provedor.",
+    headers: { "X-M2M-Key": "<M2M_API_KEY>", "X-Sidecar-Secret": "<segredo de uma das partes>" },
     query: { contractRef: "<contractRef do negotiate>" },
     returns: { effectiveStatus: "active|expired|agreement-valid-no-active-token", agreement: {}, credential: {}, tokens: [] },
   },
@@ -82,6 +84,13 @@ const INTERFACES = [
     method: "GET", path: "{sidecarEndpoint}/api/proxy/{slug}/{data|aas|resourceId}",
     description: "Consumo P2P dentro da fábrica. Fora da API do Dataspace — direto no Sidecar, com o Bearer obtido em negotiate.",
     headers: { Authorization: "Bearer {token}" },
+  },
+  {
+    name: "organization secret (admin)",
+    method: "POST", path: "/api/m2m/organization",
+    description: "Administrador define ou reseta o segredo do Sidecar de uma organização (organizações com CPS anteriores ao segredo, ou segredo perdido). Exige X-M2M-Admin-Key.",
+    headers: { "X-M2M-Admin-Key": "<M2M_ADMIN_KEY>" },
+    body: { organization: "plant1", sidecarSecret: "(opcional, ≥ 32 chars) — sem ele, gera e devolve uma vez" },
   },
   {
     name: "monitor",

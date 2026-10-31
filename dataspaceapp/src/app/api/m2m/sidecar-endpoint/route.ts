@@ -22,8 +22,8 @@
 import { NextResponse } from "next/server"
 import { FieldValue } from "firebase-admin/firestore"
 import {
-  getDb, slugify, participantIdFor, sidecarRegisterEquipment,
-  M2M_CORS, M2M_ORGS, M2M_OWNER_PREFIX, apiKeyError, decryptSidecarSecret, secretsMatch,
+  getDb, slugify, sidecarRegisterEquipment, m2mConnectorsOfOrg,
+  M2M_CORS, M2M_ORGS, apiKeyError, decryptSidecarSecret, secretsMatch,
   type M2MResource,
 } from "@/lib/m2m"
 
@@ -68,20 +68,14 @@ export async function POST(request: Request) {
   if (!providedSecret || !secretsMatch(providedSecret, sidecarSecret)) {
     return NextResponse.json({ error: "Missing or invalid X-Sidecar-Secret header." }, { status: 403, headers: M2M_CORS })
   }
-  const orgPrefix = `${M2M_OWNER_PREFIX}${slugify(organization)}:`
-  const onlyParticipant = body.equipmentSlug ? participantIdFor(organization, slugify(body.equipmentSlug)) : ""
 
-  // participantId é derivado de organization+slug no register; filtrar pelo
-  // prefixo torna a busca insensível a maiúsculas ("IFSC-GASPAR" = "ifsc-gaspar").
-  const connSnap = await db.collection("connectorProfiles").where("source", "==", "m2m").get()
-  const connectors = connSnap.docs.filter(d => {
-    const pid = String(d.data()?.participantId ?? "")
-    return onlyParticipant ? pid === onlyParticipant : pid.startsWith(orgPrefix)
-  })
+  // participantId é derivado de organization+slug no register: a busca por
+  // prefixo é insensível a maiúsculas ("IFSC-GASPAR" = "ifsc-gaspar").
+  const connectors = await m2mConnectorsOfOrg(db, organization, body.equipmentSlug ?? "")
   if (connectors.length === 0) {
     return NextResponse.json({
-      error: onlyParticipant
-        ? `No M2M participant found: ${onlyParticipant}`
+      error: body.equipmentSlug
+        ? `No M2M participant found for ${organization}/${body.equipmentSlug}`
         : `No M2M participants found for organization: ${organization}`,
     }, { status: 404, headers: M2M_CORS })
   }
